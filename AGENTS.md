@@ -29,6 +29,9 @@ cargo metadata --no-deps --format-version 1
 ```
 
 Use focused package or test commands during development. Run workspace formatting, Clippy, and tests once after the changed behavior has been exercised directly.
+Measure startup using wall-clock time from launching the already-built release binary until the
+RPC listener is ready. Do not include Cargo build time or use summed user CPU time; Wasmtime
+compiles actors in parallel.
 
 ## Architecture
 
@@ -46,10 +49,18 @@ Keep these established system constraints:
 - Ensure one clear owner for the engine pool, blockstore, current root, synthetic chain, pool, and snapshots.
 - Do not publish state roots produced by calls or gas estimation.
 - Reuse the FVM engine pool and reconstruct machines from the selected root and block context.
+- Eagerly compile only the EAM, EthAccount, EVM, and Placeholder actors used by Ethereum
+  transactions. Keep `fvm`'s `testing` feature enabled solely to prevent `DefaultExecutor` from
+  preloading the complete builtin manifest. That feature grants actor ID 98 a test-only
+  create-actor permission, so actor ID 98 must remain absent from every reachable state.
 - Validate Ethereum signatures and chain IDs from the original transaction envelope.
 - Calculate inclusion gas from the exact serialized Filecoin `SignedMessage`.
 - Preserve actor-state and IPLD invariants when adding direct state controls.
 - Return a clear unsupported error when FEVM cannot provide an Anvil behavior; never fake success.
+- Verify the pinned official actor bundle root and required manifest entries before caching or
+  executing it. Cache official downloads under the CLI-selected XDG/home cache path with the
+  expected root in the filename, replace invalid entries, and never copy local `--actor-bundle`
+  inputs into that cache.
 
 Use public Foundry and `ref-fvm` crates where they fit. Adapt narrowly scoped Forest and integration-harness behavior rather than taking production dependencies on Forest, `fvm_integration_tests`, `anvil-core`, or the main `anvil` crate.
 
