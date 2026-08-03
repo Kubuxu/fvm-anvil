@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read};
+use std::path::Path;
 
 use cid::Cid;
 use fvm::machine::Manifest;
@@ -28,12 +29,35 @@ impl BundleArtifacts {
 
 pub(crate) fn load_bundle(
     selection: &ActorBundle,
+    cache_path: Option<&Path>,
     store: &MemoryBlockstore,
 ) -> Result<BundleArtifacts, NodeError> {
     let expected_root = selection.expected_root()?;
-    let roots = match selection {
+    match selection {
         ActorBundle::Official => {
+            if let Some(path) = cache_path
+                && path.is_file()
+            {
+                match File::open(path)
+                    .map_err(|source| BundleError::Open { path: path.to_owned(), source })
+                    .and_then(|file| load_and_validate(store, BufReader::new(file), expected_root))
+                {
+                    Ok(bundle) => {
+                        tracing::debug!(path = %path.display(), "loaded cached actor bundle");
+                        return Ok(bundle);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            %error,
+                            "cached actor bundle is invalid; downloading a fresh copy"
+                        );
+                    }
+                }
+            }
+
             let url = selection.source_url()?.expect("the official actor bundle always has a URL");
+            tracing::info!(%url, "downloading actor bundle");
             let response = ureq::get(url.as_str()).call().map_err(|error| {
                 BundleError::Download { url: url.to_string(), detail: error.to_string() }
             })?;
@@ -41,20 +65,35 @@ pub(crate) fn load_bundle(
             response.into_body().into_reader().read_to_end(&mut bytes).map_err(|error| {
                 BundleError::Download { url: url.to_string(), detail: error.to_string() }
             })?;
-            load_car(store, Cursor::new(bytes))
-                .map_err(|error| BundleError::Car(error.to_string()))?
+            let bundle = load_and_validate(store, Cursor::new(&bytes), expected_root)?;
+            if let Some(path) = cache_path
+                && let Err(error) = cache_bundle(path, &bytes)
+            {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "failed to cache actor bundle"
+                );
+            }
+            Ok(bundle)
         }
         ActorBundle::Local { path } => {
             let file = File::open(path)
                 .map_err(|source| BundleError::Open { path: path.clone(), source })?;
-            load_car(store, BufReader::new(file))
-                .map_err(|error| BundleError::Car(error.to_string()))?
+            load_and_validate(store, BufReader::new(file), expected_root).map_err(Into::into)
         }
-    };
+    }
+}
 
+fn load_and_validate(
+    store: &MemoryBlockstore,
+    reader: impl Read,
+    expected_root: Option<Cid>,
+) -> Result<BundleArtifacts, BundleError> {
+    let roots = load_car(store, reader).map_err(|error| BundleError::Car(error.to_string()))?;
     let actual_root = match roots.as_slice() {
         [root] => *root,
-        roots => return Err(BundleError::RootCount(roots.len()).into()),
+        roots => return Err(BundleError::RootCount(roots.len())),
     };
     if let Some(expected_root) = expected_root
         && actual_root != expected_root
@@ -62,8 +101,7 @@ pub(crate) fn load_bundle(
         return Err(BundleError::RootMismatch {
             expected: Box::new(expected_root),
             actual: Box::new(actual_root),
-        }
-        .into());
+        });
     }
 
     let manifest_info = store
@@ -75,7 +113,7 @@ pub(crate) fn load_bundle(
         .ok_or(BundleError::MissingManifestInformation(Box::new(actual_root)))?;
     let (manifest_format, manifest_data) = manifest_info;
     if manifest_format != 1 {
-        return Err(BundleError::UnsupportedManifestFormat(manifest_format).into());
+        return Err(BundleError::UnsupportedManifestFormat(manifest_format));
     }
 
     Manifest::load(store, &manifest_data, manifest_format)
@@ -91,11 +129,30 @@ pub(crate) fn load_bundle(
             return Err(BundleError::MissingActorCode {
                 name: name.to_owned(),
                 code: Box::new(code),
-            }
-            .into());
+            });
         }
     }
     Ok(BundleArtifacts { root: actual_root, manifest_data, codes_by_name })
+}
+
+fn cache_bundle(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!("car.{}.tmp", std::process::id()));
+    fs::write(&temporary, bytes)?;
+    if let Err(first_error) = fs::rename(&temporary, path) {
+        if path.is_file() {
+            fs::remove_file(path)?;
+            fs::rename(&temporary, path)?;
+        } else {
+            let _ = fs::remove_file(&temporary);
+            return Err(first_error);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -110,7 +167,7 @@ mod tests {
     use fvm_shared::IPLD_RAW;
     use multihash_codetable::{Code, MultihashDigest};
 
-    use super::load_bundle;
+    use super::{cache_bundle, load_bundle};
     use crate::config::ActorBundle;
     use crate::error::{BundleError, NodeError};
 
@@ -121,7 +178,7 @@ mod tests {
         let path = write_header("multiple", vec![first, second]);
         let selection = ActorBundle::local(&path).unwrap();
 
-        let result = load_bundle(&selection, &MemoryBlockstore::default());
+        let result = load_bundle(&selection, None, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
 
         assert!(matches!(result, Err(NodeError::Bundle(BundleError::RootCount(2)))));
@@ -133,13 +190,25 @@ mod tests {
         let path = write_header("unlisted-root", vec![root]);
         let selection = ActorBundle::local(&path).unwrap();
 
-        let result = load_bundle(&selection, &MemoryBlockstore::default());
+        let result = load_bundle(&selection, None, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
 
         assert!(matches!(
             result,
             Err(NodeError::Bundle(BundleError::MissingManifestInformation(found))) if *found == root
         ));
+    }
+    #[test]
+    fn cache_bundle_creates_parent_and_replaces_invalid_data() {
+        let directory =
+            std::env::temp_dir().join(format!("fvm-anvil-node-cache-{}", std::process::id()));
+        let path = directory.join("nested").join("actors.car");
+
+        cache_bundle(&path, b"first").unwrap();
+        cache_bundle(&path, b"verified").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"verified");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     fn test_cid(seed: &[u8]) -> Cid {

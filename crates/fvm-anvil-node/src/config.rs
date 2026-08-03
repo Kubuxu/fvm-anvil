@@ -108,6 +108,7 @@ impl GenesisAccount {
 pub struct NodeConfig {
     chain_id: u64,
     actor_bundle: ActorBundle,
+    actor_bundle_cache: Option<PathBuf>,
     genesis_accounts: Vec<GenesisAccount>,
     genesis_block_number: u64,
     genesis_timestamp: u64,
@@ -125,6 +126,7 @@ impl NodeConfig {
         Ok(Self {
             chain_id,
             actor_bundle,
+            actor_bundle_cache: None,
             genesis_accounts: vec![GenesisAccount::new(
                 DEFAULT_PREFUNDED_ETH_ADDRESS,
                 U256::from(DEFAULT_PREFUNDED_BALANCE_FIL) * U256::from(10_u64.pow(18)),
@@ -139,6 +141,11 @@ impl NodeConfig {
 
     pub fn with_genesis_accounts(mut self, accounts: Vec<GenesisAccount>) -> Self {
         self.genesis_accounts = accounts;
+        self
+    }
+    /// Caches the pinned official bundle at `path`. Local bundles are never copied.
+    pub fn with_actor_bundle_cache(mut self, path: Option<PathBuf>) -> Self {
+        self.actor_bundle_cache = path;
         self
     }
 
@@ -182,6 +189,9 @@ impl NodeConfig {
 
     pub const fn actor_bundle(&self) -> &ActorBundle {
         &self.actor_bundle
+    }
+    pub fn actor_bundle_cache(&self) -> Option<&Path> {
+        self.actor_bundle_cache.as_deref()
     }
 
     pub fn genesis_accounts(&self) -> &[GenesisAccount] {

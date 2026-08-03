@@ -45,7 +45,9 @@ The checked-out sources currently provide:
 Defaults:
 
 - Network version 28.
-- Official mainnet actor bundle v18, pinned by URL and expected manifest CID.
+- Official mainnet actor bundle v18, pinned by URL and expected manifest CID. The CLI caches a
+  verified download under `$XDG_CACHE_HOME/fvm-anvil` (or `$HOME/.cache/fvm-anvil`) using the
+  expected root in the filename; an invalid cache entry is replaced from the pinned URL.
 - Local chain ID 31337.
 - Ten deterministic development accounts derived from
   `test test test test test test test test test test test junk` at
@@ -84,6 +86,10 @@ Each produced block constructs a `DefaultMachine` from the current root and bloc
 Startup eagerly compiles only the EAM, EthAccount, EVM, and placeholder actors used by the Ethereum
 transaction path. Other bundle actors compile lazily if a future feature invokes them; compiling
 every v18 actor delays readiness without benefiting normal FEVM execution.
+`ref-fvm`'s `testing` feature disables `DefaultExecutor`'s unconditional full-manifest preload. It
+also grants actor ID 98 a test-only create-actor permission; this does not alter reachable node
+behavior because ID 98 is reserved and genesis starts allocating non-singleton actors at ID 100.
+
 
 Calls and gas estimation start from a selected historical root, execute without publishing the resulting root, and retain only their return value or diagnostic information. Content-addressed blocks written by discarded simulations are harmless because their roots are not adopted.
 

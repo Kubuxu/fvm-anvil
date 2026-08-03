@@ -31,7 +31,9 @@ alloy-signer-local = { version = "=2.2.0", default-features = false, features = 
 anvil-rpc = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-rpc" }
 anvil-server = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-server", default-features = false }
 
-fvm = { version = "~4.8.2", default-features = false, features = ["verify-signature"] }
+# `testing` suppresses DefaultExecutor's eager compilation of every builtin actor. Its only
+# execution-semantic exception applies to reserved actor ID 98, which genesis never creates.
+fvm = { version = "~4.8.2", default-features = false, features = ["testing", "verify-signature"] }
 fvm_ipld_blockstore = "0.3.2"
 fvm_ipld_car = "0.9.1"
 fvm_ipld_encoding = "0.5.4"

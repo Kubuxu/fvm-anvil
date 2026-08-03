@@ -1,4 +1,5 @@
 //! fvm-anvil process entry point.
+use std::env;
 
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write as _};
@@ -18,10 +19,10 @@ use alloy_signer_local::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, ValueEnum};
 use fvm_anvil_node::{
-    ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_BASE_FEE_PER_GAS, DEFAULT_BLOCK_GAS_LIMIT,
-    DEFAULT_CHAIN_ID, DEFAULT_GENESIS_BLOCK_NUMBER, DEFAULT_GENESIS_TIMESTAMP,
-    DEFAULT_PREFUNDED_BALANCE_FIL, GenesisAccount, NETWORK_VERSION, NodeConfig, NodeHandle,
-    NodeService,
+    ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_BASE_FEE_PER_GAS,
+    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_CHAIN_ID, DEFAULT_GENESIS_BLOCK_NUMBER,
+    DEFAULT_GENESIS_TIMESTAMP, DEFAULT_PREFUNDED_BALANCE_FIL, GenesisAccount, NETWORK_VERSION,
+    NodeConfig, NodeHandle, NodeService,
 };
 use fvm_anvil_rpc::{RpcService, ServerConfig, http_router};
 use rand_08::{SeedableRng, rngs::StdRng};
@@ -218,6 +219,8 @@ impl TryFrom<Cli> for AppConfig {
     type Error = anyhow::Error;
 
     fn try_from(cli: Cli) -> Result<Self> {
+        let actor_bundle_cache =
+            if cli.actor_bundle.is_none() { default_actor_bundle_cache_path() } else { None };
         let actor_bundle = match &cli.actor_bundle {
             Some(path) => ActorBundle::local(path).context("invalid local actor bundle")?,
             None => ActorBundle::Official,
@@ -248,6 +251,7 @@ impl TryFrom<Cli> for AppConfig {
         };
         let node = NodeConfig::new(cli.chain_id, actor_bundle)
             .context("invalid node configuration")?
+            .with_actor_bundle_cache(actor_bundle_cache)
             .with_genesis_accounts(genesis_accounts.clone())
             .with_genesis_block(cli.number, cli.timestamp)
             .context("invalid genesis block configuration")?
@@ -353,6 +357,21 @@ fn parse_nonzero_u64(value: &str) -> Result<u64, String> {
         return Err("value must be greater than zero".to_owned());
     }
     Ok(parsed)
+}
+fn default_actor_bundle_cache_path() -> Option<PathBuf> {
+    let cache_home = env::var_os("XDG_CACHE_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".cache"))
+        })?;
+    Some(
+        cache_home.join("fvm-anvil").join(format!(
+            "builtin-actors-v{ACTOR_BUNDLE_VERSION}-{DEFAULT_ACTOR_BUNDLE_ROOT}.car"
+        )),
+    )
 }
 
 fn initialize_tracing(quiet: bool, color: ColorChoice, verbosity: u8) {

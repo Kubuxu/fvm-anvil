@@ -258,7 +258,8 @@ impl NodeRuntime {
     pub(crate) fn new(config: NodeConfig) -> Result<Self, NodeError> {
         let store = Rc::new(MemoryBlockstore::default());
         let bundle_started = Instant::now();
-        let bundle = load_bundle(config.actor_bundle(), store.as_ref())?;
+        let bundle =
+            load_bundle(config.actor_bundle(), config.actor_bundle_cache(), store.as_ref())?;
         tracing::debug!(elapsed = ?bundle_started.elapsed(), "loaded actor bundle");
         let genesis_started = Instant::now();
         let genesis = create_genesis(&store, &bundle, config.genesis_accounts())?;
