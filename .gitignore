@@ -1,1 +1,3 @@
 extern
+/tests/acceptance/cache/
+/tests/acceptance/out/
