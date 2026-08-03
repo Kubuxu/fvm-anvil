@@ -1,0 +1,32 @@
+[package]
+name = "fvm-anvil-node"
+description = "Stateful ref-FVM execution runtime for fvm-anvil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fvm-anvil-eth.workspace = true
+
+alloy-primitives.workspace = true
+anyhow.workspace = true
+cid.workspace = true
+fvm.workspace = true
+fvm_ipld_blockstore.workspace = true
+fvm_ipld_car.workspace = true
+fvm_ipld_encoding.workspace = true
+fvm_ipld_kamt.workspace = true
+fvm_shared.workspace = true
+multihash-codetable.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+ureq.workspace = true

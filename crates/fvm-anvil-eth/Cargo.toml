@@ -1,0 +1,22 @@
+[package]
+name = "fvm-anvil-eth"
+description = "Ethereum-to-Filecoin protocol bridge for fvm-anvil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+fvm_ipld_encoding.workspace = true
+fvm_shared.workspace = true
+serde.workspace = true
+thiserror.workspace = true

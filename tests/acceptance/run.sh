@@ -5,6 +5,7 @@ TEST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
 PRIVATE_KEY="${PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 EXPECTED_CHAIN_ID="${EXPECTED_CHAIN_ID:-}"
+FILECOIN_ASSERTIONS="${FILECOIN_ASSERTIONS:-0}"
 INITIAL_VALUE=41
 UPDATED_VALUE=99
 CONTRACT="src/NarrowSlice.sol:NarrowSlice"
@@ -120,6 +121,30 @@ assert_eq "$(json_field "$mutation_receipt" '.logs[0].data')" \
 indexed_caller="$(json_field "$mutation_receipt" '.logs[0].topics[1]')"
 assert_eq "0x${indexed_caller:26}" "${sender,,}" "indexed event caller"
 
+gas_values=()
+if [[ "$FILECOIN_ASSERTIONS" == "1" ]]; then
+    gas_breakdown="$(cast rpc --rpc-url "$RPC_URL" filecoin_getGasBreakdown "$mutation_hash" 2>&1)" ||
+        fail "gas breakdown lookup failed: $gas_breakdown"
+    gas_fields=(
+        baseFeeBurn
+        overEstimationBurn
+        minerPenalty
+        minerTip
+        refund
+        gasRefund
+        gasBurned
+    )
+    for gas_field in "${gas_fields[@]}"; do
+        gas_value="$(json_field "$gas_breakdown" ".${gas_field}" 2>&1)" ||
+            fail "gas breakdown missing $gas_field: $gas_value"
+        [[ "$gas_value" =~ ^0x(0|[1-9a-f][0-9a-f]*)$ ]] ||
+            fail "gas breakdown $gas_field must be a minimal lowercase hex quantity, got '$gas_value'"
+        gas_values+=("$gas_value")
+    done
+    [[ "${gas_values[0]}" != "0x0" ]] ||
+        fail "gas breakdown baseFeeBurn must be nonzero"
+fi
+
 transaction="$(cast tx "$mutation_hash" --json --rpc-url "$RPC_URL")"
 assert_eq "$(json_field "$transaction" '.hash')" "$mutation_hash" "indexed transaction"
 assert_eq "$(json_field "$transaction" '.blockHash')" "$mutation_block_hash" \
@@ -140,6 +165,10 @@ assert_eq "$(cast nonce "$sender" --rpc-url "$RPC_URL")" "$nonce_before_mutation
     "sender nonce after inner revert"
 assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getTransactionReceipt "$mutation_hash")" "null" \
     "reverted mutation receipt"
+if [[ "$FILECOIN_ASSERTIONS" == "1" ]]; then
+    assert_eq "$(cast rpc --rpc-url "$RPC_URL" filecoin_getGasBreakdown "$mutation_hash" 2>&1)" "null" \
+        "reverted mutation gas breakdown"
+fi
 
 assert_eq "$(cast rpc --rpc-url "$RPC_URL" anvil_revert "$outer_snapshot")" "true" \
     "outer snapshot revert"
@@ -153,11 +182,23 @@ assert_eq "$(cast block-number --rpc-url "$RPC_URL")" "$block_number_before" \
 assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getTransactionReceipt "$deployment_hash")" "null" \
     "deployment receipt cleanup"
 
-printf 'acceptance passed: chain=%s sender=%s contract=%s deploy=%s mutate=%s estimate=%s gasUsed=%s\n' \
-    "$chain_id" \
-    "$sender" \
-    "$contract_address" \
-    "$deployment_hash" \
-    "$mutation_hash" \
-    "$estimated_gas" \
-    "$gas_used"
+if [[ "$FILECOIN_ASSERTIONS" == "1" ]]; then
+    printf 'acceptance passed: chain=%s sender=%s contract=%s deploy=%s mutate=%s estimate=%s gasUsed=%s baseFeeBurn=%s overEstimationBurn=%s minerPenalty=%s minerTip=%s refund=%s gasRefund=%s gasBurned=%s\n' \
+        "$chain_id" \
+        "$sender" \
+        "$contract_address" \
+        "$deployment_hash" \
+        "$mutation_hash" \
+        "$estimated_gas" \
+        "$gas_used" \
+        "${gas_values[@]}"
+else
+    printf 'acceptance passed: chain=%s sender=%s contract=%s deploy=%s mutate=%s estimate=%s gasUsed=%s\n' \
+        "$chain_id" \
+        "$sender" \
+        "$contract_address" \
+        "$deployment_hash" \
+        "$mutation_hash" \
+        "$estimated_gas" \
+        "$gas_used"
+fi

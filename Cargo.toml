@@ -1,0 +1,72 @@
+[workspace]
+members = [
+    "crates/fvm-anvil",
+    "crates/fvm-anvil-eth",
+    "crates/fvm-anvil-node",
+    "crates/fvm-anvil-rpc",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+authors = ["fvm-anvil contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Kubuxu/fvm-anvil"
+publish = false
+
+[workspace.dependencies]
+fvm-anvil-eth = { path = "crates/fvm-anvil-eth" }
+fvm-anvil-node = { path = "crates/fvm-anvil-node" }
+fvm-anvil-rpc = { path = "crates/fvm-anvil-rpc" }
+
+alloy-consensus = { version = "=2.2.0", default-features = false, features = ["k256", "serde", "std"] }
+alloy-eips = { version = "=2.2.0", default-features = false, features = ["serde", "std"] }
+alloy-network = { version = "=2.2.0", default-features = false }
+alloy-primitives = { version = "=1.6.1", features = ["getrandom", "k256", "rand", "serde"] }
+alloy-rlp = "=0.3.16"
+alloy-rpc-types-eth = { version = "=2.2.0", default-features = false }
+anvil-rpc = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-rpc" }
+anvil-server = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-server", default-features = false }
+
+fvm = { version = "~4.8.2", default-features = false, features = ["verify-signature"] }
+fvm_ipld_blockstore = "0.3.2"
+fvm_ipld_car = "0.9.1"
+fvm_ipld_encoding = "0.5.4"
+fvm_ipld_kamt = "0.4.6"
+fvm_shared = "~4.8.2"
+
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+axum = "=0.8.9"
+bytes = "1.10"
+cid = { version = "0.11.3", features = ["serde", "std"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+futures = "0.3.31"
+hex = "0.4.3"
+multihash-codetable = { version = "0.2.2", features = ["blake2b", "sha2"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.48", features = ["macros", "net", "rt", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2.5"
+ureq = { version = "=3.1.2", default-features = false, features = ["rustls"] }
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+borrow_as_ptr = "warn"
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+cloned_instead_of_copied = "warn"
+collection_is_never_read = "warn"
+inefficient_to_string = "warn"
+manual_is_variant_and = "warn"
+redundant_clone = "warn"
+str_to_string = "warn"

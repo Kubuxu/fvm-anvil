@@ -3,6 +3,9 @@
 Status: living design record  
 Last updated: 2026-08-03
 
+The active execution sequence and delegation gates are maintained in
+[`docs/implementation-plan.md`](implementation-plan.md).
+
 ## Purpose
 
 `fvm-anvil` is a local development node for Filecoin's EVM actor. It should expose a familiar Anvil-compatible Ethereum JSON-RPC interface while executing contracts with `ref-fvm` and the builtin EAM, EVM, and EthAccount actors.
@@ -407,8 +410,9 @@ a state-changing call, validates its receipt, event, transaction, and block, the
 `anvil_snapshot`/`anvil_revert` behavior including nonce, receipt-index, bytecode, and state
 restoration. An outer snapshot makes the test leave the target node unchanged.
 
-This portable test does not call Filecoin-specific endpoints because it must also pass against
-upstream Anvil. FVM gas-breakdown assertions are an additional fvm-anvil-only acceptance gate.
+By default this portable test does not call Filecoin-specific endpoints because it must also pass
+against upstream Anvil. Set `FILECOIN_ASSERTIONS=1` when targeting fvm-anvil to add the gas-breakdown
+checks without changing the runner.
 
 ### Milestone 2: Anvil control parity needed for development
 

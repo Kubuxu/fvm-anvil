@@ -1,0 +1,25 @@
+[package]
+name = "fvm-anvil"
+description = "Anvil-compatible local development node backed by ref-FVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fvm-anvil-node.workspace = true
+fvm-anvil-rpc.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+cid.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
