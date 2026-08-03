@@ -230,9 +230,11 @@ pruning.
 
 ### Wave 4: broader development controls
 
-Implement interval/mixed mining, time controls, fee/FIFO ordering, pool inspection/removal, broader
-logs and historical queries, and balance/nonce controls. Each behavior receives a public-boundary
-compatibility case and real endpoint smoke test.
+Delivered: deterministic genesis accounts and funding, genesis block/fee/gas configuration,
+manual/interval/mixed startup mining, Anvil CLI aliases, server controls, startup output, and
+`--config-out`. Remaining work covers time controls, fee/FIFO ordering, pool inspection/removal,
+and balance/nonce controls. Each remaining behavior receives a public-boundary compatibility case
+and real endpoint smoke test.
 
 ### Wave 5: versioned direct EVM state controls
 

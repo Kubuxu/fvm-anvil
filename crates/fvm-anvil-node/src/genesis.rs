@@ -1,18 +1,20 @@
 use std::rc::Rc;
 
-use alloy_primitives::{Address as EthAddress, address};
+use alloy_primitives::Address as EthAddress;
 use cid::Cid;
 use fvm::state_tree::{ActorState, StateTree};
 use fvm_ipld_blockstore::MemoryBlockstore;
 use fvm_ipld_encoding::CborStore;
 use fvm_ipld_encoding::tuple::*;
 use fvm_shared::address::Address;
+use fvm_shared::bigint::{BigInt, Sign};
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::state::StateTreeVersion;
 use multihash_codetable::Code;
 use serde::Serialize;
 
 use crate::bundle::BundleArtifacts;
+use crate::config::GenesisAccount;
 use crate::error::NodeError;
 
 const SYSTEM_ACTOR_ID: u64 = 0;
@@ -21,10 +23,6 @@ const REWARD_ACTOR_ID: u64 = 2;
 const EAM_ACTOR_ID: u64 = 10;
 const BURNT_FUNDS_ACTOR_ID: u64 = 99;
 const FIRST_NON_SINGLETON_ACTOR_ID: u64 = 100;
-const PREFUNDED_BALANCE_FIL: u64 = 10_000;
-
-pub(crate) const PREFUNDED_ETH_ADDRESS: EthAddress =
-    address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
 // These tuple layouts are adapted from builtin-actors v18.0.0 system, init, and account state
 // definitions (Copyright Protocol Labs, MIT OR Apache-2.0). They intentionally reproduce only the
@@ -63,6 +61,7 @@ pub(crate) struct GenesisOutput {
 pub(crate) fn create_genesis(
     store: &Rc<MemoryBlockstore>,
     bundle: &BundleArtifacts,
+    accounts: &[GenesisAccount],
 ) -> Result<GenesisOutput, NodeError> {
     let empty_hamt = store
         .put_cbor(&EmptyHamtNode(Vec::new(), Vec::new()), Code::Blake2b256)
@@ -117,28 +116,45 @@ pub(crate) fn create_genesis(
         actor(bundle.code("account")?, burnt_state, TokenAmount::default(), None),
     );
 
-    let delegated = Address::new_delegated(EAM_ACTOR_ID, PREFUNDED_ETH_ADDRESS.as_slice())
-        .map_err(|error| NodeError::Genesis(error.to_string()))?;
-    let actor_id = tree
-        .register_new_address(&delegated)
-        .map_err(|error| NodeError::Genesis(error.to_string()))?;
-    if actor_id != FIRST_NON_SINGLETON_ACTOR_ID {
-        return Err(NodeError::Genesis(format!(
-            "prefunded account received actor ID {actor_id}, expected {FIRST_NON_SINGLETON_ACTOR_ID}"
-        )));
+    let mut prefunded_accounts = Vec::new();
+    prefunded_accounts
+        .try_reserve_exact(accounts.len())
+        .map_err(|error| genesis_error(error.to_string()))?;
+    for (index, account) in accounts.iter().enumerate() {
+        let delegated = Address::new_delegated(EAM_ACTOR_ID, account.ethereum().as_slice())
+            .map_err(|error| NodeError::Genesis(error.to_string()))?;
+        let actor_id = tree
+            .register_new_address(&delegated)
+            .map_err(|error| NodeError::Genesis(error.to_string()))?;
+        let expected_id = FIRST_NON_SINGLETON_ACTOR_ID
+            .checked_add(
+                u64::try_from(index)
+                    .map_err(|_| NodeError::Genesis("too many prefunded accounts".to_owned()))?,
+            )
+            .ok_or_else(|| NodeError::Genesis("prefunded actor ID overflow".to_owned()))?;
+        if actor_id != expected_id {
+            return Err(NodeError::Genesis(format!(
+                "prefunded account {} received actor ID {actor_id}, expected {expected_id}",
+                account.ethereum()
+            )));
+        }
+        tree.set_actor(
+            actor_id,
+            actor(
+                bundle.code("placeholder")?,
+                placeholder_state,
+                TokenAmount::from_atto(BigInt::from_bytes_be(
+                    Sign::Plus,
+                    &account.balance().to_be_bytes::<32>(),
+                )),
+                Some(delegated),
+            ),
+        );
+        prefunded_accounts.push(PrefundedAccount { ethereum: account.ethereum() });
     }
-    tree.set_actor(
-        actor_id,
-        actor(
-            bundle.code("placeholder")?,
-            placeholder_state,
-            TokenAmount::from_whole(PREFUNDED_BALANCE_FIL),
-            Some(delegated),
-        ),
-    );
 
     let root = tree.flush().map_err(|error| NodeError::Genesis(error.to_string()))?;
-    Ok(GenesisOutput { root, accounts: vec![PrefundedAccount { ethereum: PREFUNDED_ETH_ADDRESS }] })
+    Ok(GenesisOutput { root, accounts: prefunded_accounts })
 }
 
 fn actor(

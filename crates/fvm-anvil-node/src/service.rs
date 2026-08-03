@@ -2,6 +2,7 @@ use std::sync::mpsc as std_mpsc;
 use std::thread::{self, JoinHandle};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use cid::Cid;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::config::NodeConfig;
@@ -121,6 +122,9 @@ impl NodeHandle {
     pub async fn automine(&self) -> Result<bool, NodeError> {
         self.request(|reply| WorkerCommand::Automine { reply }).await
     }
+    pub async fn startup_mining_mode_changed(&self) -> Result<bool, NodeError> {
+        self.request(|reply| WorkerCommand::StartupMiningModeChanged { reply }).await
+    }
 
     pub async fn set_automine(&self, enabled: bool) -> Result<(), NodeError> {
         self.request(|reply| WorkerCommand::SetAutomine { enabled, reply }).await
@@ -151,9 +155,22 @@ impl NodeHandle {
     }
 }
 
+/// Immutable information discovered while starting the FVM runtime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeStartupInfo {
+    actor_bundle_root: Cid,
+}
+
+impl NodeStartupInfo {
+    pub const fn actor_bundle_root(&self) -> Cid {
+        self.actor_bundle_root
+    }
+}
+
 /// Owns the dedicated ref-FVM worker thread and its public handle.
 pub struct NodeService {
     handle: NodeHandle,
+    startup_info: NodeStartupInfo,
     _worker: JoinHandle<()>,
 }
 
@@ -168,12 +185,16 @@ impl NodeService {
             .spawn(move || run_worker(config, receiver, ready))
             .map_err(NodeError::WorkerSpawn)?;
 
-        readiness.recv().map_err(|_| NodeError::WorkerStartup)??;
-        Ok(Self { handle: NodeHandle { commands }, _worker: worker })
+        let startup_info = readiness.recv().map_err(|_| NodeError::WorkerStartup)??;
+        Ok(Self { handle: NodeHandle { commands }, startup_info, _worker: worker })
     }
 
     pub fn handle(&self) -> NodeHandle {
         self.handle.clone()
+    }
+
+    pub const fn startup_info(&self) -> &NodeStartupInfo {
+        &self.startup_info
     }
 }
 
@@ -247,6 +268,9 @@ enum WorkerCommand {
     Automine {
         reply: Reply<bool>,
     },
+    StartupMiningModeChanged {
+        reply: Reply<bool>,
+    },
     SetAutomine {
         enabled: bool,
         reply: Reply<()>,
@@ -269,7 +293,7 @@ type Reply<T> = oneshot::Sender<Result<T, NodeError>>;
 fn run_worker(
     config: NodeConfig,
     mut commands: mpsc::Receiver<WorkerCommand>,
-    ready: std_mpsc::SyncSender<Result<(), NodeError>>,
+    ready: std_mpsc::SyncSender<Result<NodeStartupInfo, NodeError>>,
 ) {
     let mut runtime = match NodeRuntime::new(config) {
         Ok(runtime) => runtime,
@@ -278,7 +302,8 @@ fn run_worker(
             return;
         }
     };
-    if ready.send(Ok(())).is_err() {
+    let startup_info = NodeStartupInfo { actor_bundle_root: runtime.actor_bundle_root() };
+    if ready.send(Ok(startup_info)).is_err() {
         return;
     }
 
@@ -332,6 +357,9 @@ fn run_worker(
             WorkerCommand::Automine { reply } => {
                 let _ = reply.send(Ok(runtime.automine()));
             }
+            WorkerCommand::StartupMiningModeChanged { reply } => {
+                let _ = reply.send(Ok(runtime.startup_mining_mode_changed()));
+            }
             WorkerCommand::SetAutomine { enabled, reply } => {
                 let _ = reply.send(runtime.set_automine(enabled));
             }
@@ -355,9 +383,11 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
 
     use super::NodeService;
-    use crate::config::{ActorBundle, DEFAULT_CHAIN_ID, NodeConfig};
+    use crate::config::{
+        ActorBundle, DEFAULT_CHAIN_ID, DEFAULT_PREFUNDED_ETH_ADDRESS as PREFUNDED_ETH_ADDRESS,
+        NodeConfig,
+    };
     use crate::error::NodeError;
-    use crate::genesis::PREFUNDED_ETH_ADDRESS;
     use crate::types::{BlockSelector, CallRequest, LogFilter};
 
     #[test]

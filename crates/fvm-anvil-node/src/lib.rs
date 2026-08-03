@@ -14,10 +14,12 @@ mod types;
 
 pub use config::{
     ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_ACTOR_BUNDLE_URL,
-    DEFAULT_CHAIN_ID, NETWORK_VERSION, NodeConfig,
+    DEFAULT_BASE_FEE_PER_GAS, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_CHAIN_ID,
+    DEFAULT_GENESIS_BLOCK_NUMBER, DEFAULT_GENESIS_TIMESTAMP, DEFAULT_PREFUNDED_BALANCE_FIL,
+    DEFAULT_PREFUNDED_ETH_ADDRESS, GenesisAccount, NETWORK_VERSION, NodeConfig,
 };
 pub use error::{BundleError, ConfigError, NodeError};
-pub use service::{NodeHandle, NodeService};
+pub use service::{NodeHandle, NodeService, NodeStartupInfo};
 pub use types::{
     BASE_FEE_PER_GAS, BLOCK_GAS_LIMIT, Block, BlockSelector, CallRequest, FilecoinGasBreakdown,
     Log, LogFilter, Transaction, TransactionReceipt,

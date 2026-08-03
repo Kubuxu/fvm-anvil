@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
+use std::time::Instant;
 
 use alloy_primitives::{Address as EthAddress, B256, Bytes, Keccak256, U256};
 use cid::Cid;
@@ -33,18 +34,17 @@ use crate::error::NodeError;
 use crate::externs::DeterministicExterns;
 use crate::genesis::{PrefundedAccount, create_genesis};
 use crate::types::{
-    BASE_FEE_PER_GAS, BLOCK_GAS_LIMIT, Block, BlockSelector, CallRequest, FilecoinGasBreakdown,
-    Log, LogFilter, Transaction, TransactionReceipt,
+    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, Log, LogFilter, Transaction,
+    TransactionReceipt,
 };
 
 type RuntimeMachine = DefaultMachine<Rc<MemoryBlockstore>, DeterministicExterns>;
 type RuntimeKernel = DefaultFilecoinKernel<DefaultCallManager<RuntimeMachine>>;
 type RuntimeExecutor = DefaultExecutor<RuntimeKernel>;
 
-const GENESIS_EPOCH: i64 = 0;
-const GENESIS_TIMESTAMP: u64 = 0;
 const BLOCK_TIME_SECONDS: u64 = 1;
 const EAM_ACTOR_ID: u64 = 10;
+const PRELOAD_ACTORS: [&str; 4] = ["eam", "ethaccount", "evm", "placeholder"];
 
 #[derive(Clone)]
 struct PendingTransaction {
@@ -237,6 +237,9 @@ pub(crate) struct NodeRuntime {
     current_root: Cid,
     bundle: BundleArtifacts,
     prefunded_accounts: Vec<PrefundedAccount>,
+    genesis_block_number: u64,
+    block_gas_limit: u64,
+    base_fee_per_gas: u128,
     blocks: Vec<CanonicalBlock>,
     block_numbers_by_hash: HashMap<B256, u64>,
     transactions: HashMap<B256, Transaction>,
@@ -244,6 +247,7 @@ pub(crate) struct NodeRuntime {
     gas_breakdowns: HashMap<B256, FilecoinGasBreakdown>,
     pool: VecDeque<PendingTransaction>,
     automine: bool,
+    startup_mining_mode_changed: bool,
     next_epoch: i64,
     next_timestamp: u64,
     snapshots: HashMap<U256, SnapshotState>,
@@ -253,33 +257,68 @@ pub(crate) struct NodeRuntime {
 impl NodeRuntime {
     pub(crate) fn new(config: NodeConfig) -> Result<Self, NodeError> {
         let store = Rc::new(MemoryBlockstore::default());
+        let bundle_started = Instant::now();
         let bundle = load_bundle(config.actor_bundle(), store.as_ref())?;
-        let genesis = create_genesis(&store, &bundle)?;
+        tracing::debug!(elapsed = ?bundle_started.elapsed(), "loaded actor bundle");
+        let genesis_started = Instant::now();
+        let genesis = create_genesis(&store, &bundle, config.genesis_accounts())?;
+        tracing::debug!(elapsed = ?genesis_started.elapsed(), "created genesis state");
+        let genesis_number = config.genesis_block_number();
+        let genesis_timestamp = config.genesis_timestamp();
+        let genesis_epoch = i64::try_from(genesis_number)
+            .map_err(|_| NodeError::Runtime("genesis block exceeds the FVM epoch range".into()))?;
+        let next_epoch = genesis_epoch
+            .checked_add(1)
+            .ok_or_else(|| NodeError::Runtime("genesis FVM epoch has no successor".into()))?;
+        let next_timestamp = genesis_timestamp
+            .checked_add(BLOCK_TIME_SECONDS)
+            .ok_or_else(|| NodeError::Runtime("genesis timestamp has no successor".into()))?;
 
         let mut network = NetworkConfig::new(config.network_version());
         network.chain_id(ChainID::from(config.chain_id())).override_actors(bundle.root);
+        let engine_started = Instant::now();
         let engine_pool = EnginePool::new((&network).into())
             .map_err(|error| NodeError::Runtime(error.to_string()))?;
-        engine_pool
-            .acquire()
-            .preload_all(store.as_ref(), bundle.all_codes())
-            .map_err(|error| NodeError::Runtime(error.to_string()))?;
+        tracing::debug!(elapsed = ?engine_started.elapsed(), "created FVM engine pool");
+        let engine = engine_pool.acquire();
+        for name in PRELOAD_ACTORS {
+            let code = bundle.code(name)?;
+            let preload_started = Instant::now();
+            let bytes = engine.preload(&code, store.as_ref()).map_err(|error| {
+                NodeError::Runtime(format!("failed to preload {name} actor {code}: {error}"))
+            })?;
+            tracing::debug!(
+                actor = name,
+                %code,
+                bytes,
+                elapsed = ?preload_started.elapsed(),
+                "preloaded actor Wasm"
+            );
+        }
+        drop(engine);
 
-        let genesis_hash = synthetic_genesis_hash(config.chain_id(), &genesis.root);
+        let genesis_hash = synthetic_genesis_hash(
+            config.chain_id(),
+            genesis_number,
+            genesis_timestamp,
+            config.block_gas_limit(),
+            config.base_fee_per_gas(),
+            &genesis.root,
+        );
         let genesis_block = Block {
             hash: genesis_hash,
             parent_hash: B256::ZERO,
-            number: 0,
+            number: genesis_number,
             state_root: ethereum_state_root(&genesis.root),
-            timestamp: GENESIS_TIMESTAMP,
-            gas_limit: BLOCK_GAS_LIMIT,
+            timestamp: genesis_timestamp,
+            gas_limit: config.block_gas_limit(),
             gas_used: 0,
-            base_fee_per_gas: BASE_FEE_PER_GAS,
+            base_fee_per_gas: config.base_fee_per_gas(),
             transactions: Vec::new(),
             logs: Vec::new(),
         };
         let mut block_numbers_by_hash = HashMap::new();
-        block_numbers_by_hash.insert(genesis_hash, 0);
+        block_numbers_by_hash.insert(genesis_hash, genesis_number);
 
         let runtime = Self {
             store,
@@ -288,24 +327,32 @@ impl NodeRuntime {
             current_root: genesis.root,
             bundle,
             prefunded_accounts: genesis.accounts,
+            genesis_block_number: genesis_number,
+            block_gas_limit: config.block_gas_limit(),
+            base_fee_per_gas: config.base_fee_per_gas(),
             blocks: vec![CanonicalBlock { block: genesis_block, root: genesis.root }],
             block_numbers_by_hash,
             transactions: HashMap::new(),
             receipts: HashMap::new(),
             gas_breakdowns: HashMap::new(),
             pool: VecDeque::new(),
-            automine: true,
-            next_epoch: GENESIS_EPOCH + 1,
-            next_timestamp: GENESIS_TIMESTAMP + BLOCK_TIME_SECONDS,
+            automine: config.automine(),
+            startup_mining_mode_changed: false,
+            next_epoch,
+            next_timestamp,
             snapshots: HashMap::new(),
             next_snapshot_id: 1,
         };
-        drop(runtime.new_executor_at(runtime.current_root, GENESIS_EPOCH, GENESIS_TIMESTAMP)?);
+        drop(runtime.new_executor_at(runtime.current_root, genesis_epoch, genesis_timestamp)?);
         Ok(runtime)
     }
 
     pub(crate) fn chain_id(&self) -> u64 {
         self.network.chain_id.into()
+    }
+
+    pub(crate) fn actor_bundle_root(&self) -> Cid {
+        self.bundle.root
     }
 
     pub(crate) fn accounts(&self) -> Vec<EthAddress> {
@@ -374,7 +421,7 @@ impl NodeRuntime {
     ) -> Result<Option<Block>, NodeError> {
         let number = match selector {
             BlockSelector::Latest => self.block_number(),
-            BlockSelector::Earliest => 0,
+            BlockSelector::Earliest => self.genesis_block_number,
             BlockSelector::Number(number) => number,
             BlockSelector::Hash(hash) => {
                 let Some(number) = self.block_numbers_by_hash.get(&hash).copied() else {
@@ -384,7 +431,7 @@ impl NodeRuntime {
             }
             BlockSelector::Pending => return Err(NodeError::UnsupportedSelector("pending")),
         };
-        Ok(self.blocks.get(number as usize).map(|record| record.block.clone()))
+        Ok(self.canonical_record(number).map(|record| record.block.clone()))
     }
 
     pub(crate) fn balance(
@@ -478,18 +525,26 @@ impl NodeRuntime {
             let Some(number) = self.block_numbers_by_hash.get(&hash).copied() else {
                 return Ok(Vec::new());
             };
-            &self.blocks[number as usize..=number as usize]
+            let Some(index) = self.canonical_index(number) else {
+                return Ok(Vec::new());
+            };
+            &self.blocks[index..=index]
         } else {
             let from = self.log_range_endpoint(filter.from_block, self.block_number())?;
             let to = self.log_range_endpoint(filter.to_block, self.block_number())?;
             if from > to {
                 return Err(NodeError::InvalidLogBlockRange { from, to });
             }
-            if from > self.block_number() {
+            if to < self.genesis_block_number || from > self.block_number() {
                 return Ok(Vec::new());
             }
+            let from = from.max(self.genesis_block_number);
             let to = to.min(self.block_number());
-            &self.blocks[from as usize..=to as usize]
+            let from_index =
+                self.canonical_index(from).expect("clamped canonical log range start must exist");
+            let to_index =
+                self.canonical_index(to).expect("clamped canonical log range end must exist");
+            &self.blocks[from_index..=to_index]
         };
 
         Ok(records
@@ -518,7 +573,12 @@ impl NodeRuntime {
             self.commit_blocks(1, None, None)?;
         }
         self.automine = enabled;
+        self.startup_mining_mode_changed = true;
         Ok(())
+    }
+
+    pub(crate) fn startup_mining_mode_changed(&self) -> bool {
+        self.startup_mining_mode_changed
     }
 
     pub(crate) fn snapshot(&mut self) -> U256 {
@@ -571,10 +631,10 @@ impl NodeRuntime {
         {
             return Err(NodeError::DuplicateTransaction(hash));
         }
-        if transaction.gas_limit() == 0 || transaction.gas_limit() > BLOCK_GAS_LIMIT {
+        if transaction.gas_limit() == 0 || transaction.gas_limit() > self.block_gas_limit {
             return Err(NodeError::InvalidGasLimit {
                 actual: transaction.gas_limit(),
-                maximum: BLOCK_GAS_LIMIT,
+                maximum: self.block_gas_limit,
             });
         }
         let pending_gas = self
@@ -582,10 +642,10 @@ impl NodeRuntime {
             .iter()
             .fold(0_u64, |total, pending| total.saturating_add(pending.bridged.gas_limit()));
         let total_gas = pending_gas.saturating_add(transaction.gas_limit());
-        if total_gas > BLOCK_GAS_LIMIT {
+        if total_gas > self.block_gas_limit {
             return Err(NodeError::PendingBlockGasLimit {
                 actual: total_gas,
-                maximum: BLOCK_GAS_LIMIT,
+                maximum: self.block_gas_limit,
             });
         }
         if transaction.max_priority_fee_per_gas() > transaction.max_fee_per_gas() {
@@ -594,10 +654,10 @@ impl NodeRuntime {
                 fee_cap: transaction.max_fee_per_gas(),
             });
         }
-        if transaction.max_fee_per_gas() < BASE_FEE_PER_GAS {
+        if transaction.max_fee_per_gas() < self.base_fee_per_gas {
             return Err(NodeError::FeeCapTooLow {
                 fee_cap: transaction.max_fee_per_gas(),
-                base_fee: BASE_FEE_PER_GAS,
+                base_fee: self.base_fee_per_gas,
             });
         }
 
@@ -660,9 +720,9 @@ impl NodeRuntime {
             to,
             value: request.value,
             input: request.input,
-            gas_limit: request.gas_limit.unwrap_or(BLOCK_GAS_LIMIT),
+            gas_limit: request.gas_limit.unwrap_or(self.block_gas_limit),
             nonce,
-            max_fee_per_gas: U256::from(request.max_fee_per_gas.unwrap_or(BASE_FEE_PER_GAS)),
+            max_fee_per_gas: U256::from(request.max_fee_per_gas.unwrap_or(self.base_fee_per_gas)),
             max_priority_fee_per_gas: U256::from(
                 request.max_priority_fee_per_gas.unwrap_or_default(),
             ),
@@ -688,8 +748,7 @@ impl NodeRuntime {
         interval: Option<u64>,
         timestamp: Option<u64>,
     ) -> Result<Vec<Block>, NodeError> {
-        let head_timestamp =
-            self.blocks.last().map_or(GENESIS_TIMESTAMP, |record| record.block.timestamp);
+        let head_timestamp = self.blocks.last().map_or(0, |record| record.block.timestamp);
         let schedule = MiningSchedule::new(head_timestamp, count, interval, timestamp)?;
         let capacity = usize::try_from(count)
             .map_err(|_| NodeError::MineArithmeticOverflow { field: "block count" })?;
@@ -821,9 +880,9 @@ impl NodeRuntime {
             number,
             state_root: ethereum_state_root(&root),
             timestamp: first_timestamp,
-            gas_limit: BLOCK_GAS_LIMIT,
+            gas_limit: self.block_gas_limit,
             gas_used: cumulative_gas_used,
-            base_fee_per_gas: BASE_FEE_PER_GAS,
+            base_fee_per_gas: self.base_fee_per_gas,
             transactions: transactions.clone(),
             logs: block_logs,
         };
@@ -842,9 +901,9 @@ impl NodeRuntime {
                 number,
                 state_root: ethereum_state_root(&root),
                 timestamp,
-                gas_limit: BLOCK_GAS_LIMIT,
+                gas_limit: self.block_gas_limit,
                 gas_used: 0,
-                base_fee_per_gas: BASE_FEE_PER_GAS,
+                base_fee_per_gas: self.base_fee_per_gas,
                 transactions: Vec::new(),
                 logs: Vec::new(),
             };
@@ -886,8 +945,7 @@ impl NodeRuntime {
             return Err(NodeError::UnsupportedSelector("pending"));
         }
         let number = self.resolve_block_number(selector)?;
-        let record =
-            self.blocks.get(number as usize).ok_or(NodeError::UnknownBlockNumber(number))?;
+        let record = self.canonical_record(number).ok_or(NodeError::UnknownBlockNumber(number))?;
         let epoch = i64::try_from(record.block.number).map_err(|_| {
             NodeError::Execution("canonical block exceeds the FVM epoch range".into())
         })?;
@@ -897,8 +955,12 @@ impl NodeRuntime {
     fn resolve_block_number(&self, selector: BlockSelector) -> Result<u64, NodeError> {
         match selector {
             BlockSelector::Latest => Ok(self.block_number()),
-            BlockSelector::Earliest => Ok(0),
-            BlockSelector::Number(number) if number <= self.block_number() => Ok(number),
+            BlockSelector::Earliest => Ok(self.genesis_block_number),
+            BlockSelector::Number(number)
+                if number >= self.genesis_block_number && number <= self.block_number() =>
+            {
+                Ok(number)
+            }
             BlockSelector::Number(number) => Err(NodeError::UnknownBlockNumber(number)),
             BlockSelector::Hash(hash) => self
                 .block_numbers_by_hash
@@ -909,6 +971,16 @@ impl NodeRuntime {
         }
     }
 
+    fn canonical_index(&self, number: u64) -> Option<usize> {
+        let offset = number.checked_sub(self.genesis_block_number)?;
+        let index = usize::try_from(offset).ok()?;
+        (index < self.blocks.len()).then_some(index)
+    }
+
+    fn canonical_record(&self, number: u64) -> Option<&CanonicalBlock> {
+        self.canonical_index(number).and_then(|index| self.blocks.get(index))
+    }
+
     fn log_range_endpoint(
         &self,
         selector: Option<BlockSelector>,
@@ -916,7 +988,7 @@ impl NodeRuntime {
     ) -> Result<u64, NodeError> {
         match selector {
             None | Some(BlockSelector::Latest | BlockSelector::Pending) => Ok(default),
-            Some(BlockSelector::Earliest) => Ok(0),
+            Some(BlockSelector::Earliest) => Ok(self.genesis_block_number),
             Some(BlockSelector::Number(number)) => Ok(number),
             Some(BlockSelector::Hash(_)) => {
                 Err(NodeError::UnsupportedSelector("block hash in log range"))
@@ -1021,7 +1093,7 @@ impl NodeRuntime {
         timestamp: u64,
     ) -> Result<RuntimeExecutor, NodeError> {
         let mut context = self.network.for_epoch(epoch, timestamp, root);
-        context.set_base_fee(TokenAmount::from_atto(BASE_FEE_PER_GAS));
+        context.set_base_fee(TokenAmount::from_atto(self.base_fee_per_gas));
         let machine = DefaultMachine::new(&context, Rc::clone(&self.store), DeterministicExterns)
             .map_err(|error| NodeError::Runtime(error.to_string()))?;
         DefaultExecutor::new(self.engine_pool.clone(), machine)
@@ -1136,10 +1208,21 @@ fn ethereum_state_root(root: &Cid) -> B256 {
     }
 }
 
-fn synthetic_genesis_hash(chain_id: u64, root: &Cid) -> B256 {
+fn synthetic_genesis_hash(
+    chain_id: u64,
+    number: u64,
+    timestamp: u64,
+    gas_limit: u64,
+    base_fee_per_gas: u128,
+    root: &Cid,
+) -> B256 {
     let mut hasher = Keccak256::new();
-    hasher.update(b"fvm-anvil/genesis/v1");
+    hasher.update(b"fvm-anvil/genesis/v2");
     hasher.update(chain_id.to_be_bytes());
+    hasher.update(number.to_be_bytes());
+    hasher.update(timestamp.to_be_bytes());
+    hasher.update(gas_limit.to_be_bytes());
+    hasher.update(base_fee_per_gas.to_be_bytes());
     hasher.update(root.to_bytes());
     hasher.finalize()
 }

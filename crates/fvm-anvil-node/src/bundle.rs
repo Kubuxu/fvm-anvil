@@ -18,16 +18,11 @@ pub(crate) struct BundleArtifacts {
     pub(crate) root: Cid,
     pub(crate) manifest_data: Cid,
     codes_by_name: BTreeMap<String, Cid>,
-    all_codes: Vec<Cid>,
 }
 
 impl BundleArtifacts {
     pub(crate) fn code(&self, name: &'static str) -> Result<Cid, BundleError> {
         self.codes_by_name.get(name).copied().ok_or(BundleError::MissingActor(name))
-    }
-
-    pub(crate) fn all_codes(&self) -> &[Cid] {
-        &self.all_codes
     }
 }
 
@@ -100,9 +95,7 @@ pub(crate) fn load_bundle(
             .into());
         }
     }
-    let all_codes = entries.into_iter().map(|(_, code)| code).collect();
-
-    Ok(BundleArtifacts { root: actual_root, manifest_data, codes_by_name, all_codes })
+    Ok(BundleArtifacts { root: actual_root, manifest_data, codes_by_name })
 }
 
 #[cfg(test)]

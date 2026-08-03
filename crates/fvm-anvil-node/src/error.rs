@@ -9,6 +9,12 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("chain ID {0} is invalid; chain ID zero is reserved by ref-FVM")]
     InvalidChainId(u64),
+    #[error("genesis block number {0} leaves no room for the next FVM epoch")]
+    InvalidGenesisBlockNumber(u64),
+    #[error("genesis timestamp {0} leaves no room for the next block timestamp")]
+    InvalidGenesisTimestamp(u64),
+    #[error("block gas limit must be greater than zero, found {0}")]
+    InvalidBlockGasLimit(u64),
     #[error("the local actor bundle path is empty")]
     EmptyBundlePath,
     #[error("the pinned official actor bundle root is invalid: {0}")]

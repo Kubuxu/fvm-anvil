@@ -42,12 +42,19 @@ The checked-out sources currently provide:
 - Builtin actors 18.0.0.
 - Forest configuration for network version 28 with actor bundle v18.
 
-Proposed defaults:
+Defaults:
 
 - Network version 28.
 - Official mainnet actor bundle v18, pinned by URL and expected manifest CID.
-- Local chain ID 31337, configurable at initialization and through the compatible runtime method.
-- Filecoin block gas limit of 10,000,000,000.
+- Local chain ID 31337.
+- Ten deterministic development accounts derived from
+  `test test test test test test test test test test test junk` at
+  `m/44'/60'/0'/0/<index>`, each funded with 10,000 FIL.
+- Synthetic genesis block number and timestamp zero.
+- Filecoin block gas limit 10,000,000,000 and initial base fee 100 attoFIL per gas.
+
+Chain ID, generated accounts, balances, mnemonic and derivation path, additional funded accounts,
+genesis block context, block gas limit, and base fee are immutable genesis-time CLI configuration.
 
 An alternate `--actor-bundle <path>` is a genesis-time choice. Startup trusts the CAR's declared
 root, then loads its manifest and verifies the actor entries required for execution. The user is
@@ -73,6 +80,10 @@ A dedicated worker thread with a 64 MiB stack owns all mutable execution state:
 Async RPC handlers communicate with this worker through semantic commands. RPC parsing must not leak into the execution layer.
 
 Each produced block constructs a `DefaultMachine` from the current root and block context, executes selected messages sequentially through `DefaultExecutor`, records each `ApplyRet`, flushes once, and stores the resulting root with the synthetic block metadata. `EnginePool` is reused across machines.
+
+Startup eagerly compiles only the EAM, EthAccount, EVM, and placeholder actors used by the Ethereum
+transaction path. Other bundle actors compile lazily if a future feature invokes them; compiling
+every v18 actor delays readiness without benefiting normal FEVM execution.
 
 Calls and gas estimation start from a selected historical root, execute without publishing the resulting root, and retain only their return value or diagnostic information. Content-addressed blocks written by discarded simulations are harmless because their roots are not adopted.
 
@@ -242,6 +253,17 @@ Match Anvil's four modes:
 | Interval | `--block-time <seconds>` | Mine on the timer, including empty blocks. |
 | Mixed | `--block-time <seconds> --mixed-mining` | Mine on transaction arrival and timer. |
 | Manual | `--no-mining` | Keep transactions pending until explicitly mined. |
+
+Startup diagnostics, the account banner, and private development keys are written to stderr so RPC
+process stdout remains clean. `--quiet` and its `--silent` alias suppress those diagnostics.
+`--config-out <file>` writes Anvil-compatible wallet and fee fields plus a `filecoin` object
+containing the network version, actor bundle version and root, and startup mining mode. On Unix the
+file is created or reset to mode `0600` because it contains private keys.
+
+Interval scheduling stops after any `anvil_setAutomine` or `evm_setAutomine` call; the runtime RPC
+transition then owns mining behavior. Mining mode and scheduler state are process controls and are
+not included in chain snapshots.
+
 
 Also support `--max-transactions` and `--order fees|fifo`.
 

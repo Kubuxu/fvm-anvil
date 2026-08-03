@@ -28,5 +28,6 @@ multihash-codetable.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 url.workspace = true
 ureq.workspace = true

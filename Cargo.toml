@@ -27,6 +27,7 @@ alloy-network = { version = "=2.2.0", default-features = false }
 alloy-primitives = { version = "=1.6.1", features = ["getrandom", "k256", "rand", "serde"] }
 alloy-rlp = "=0.3.16"
 alloy-rpc-types-eth = { version = "=2.2.0", default-features = false }
+alloy-signer-local = { version = "=2.2.0", default-features = false, features = ["mnemonic"] }
 anvil-rpc = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-rpc" }
 anvil-server = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-server", default-features = false }
 
@@ -46,6 +47,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3.31"
 hex = "0.4.3"
 multihash-codetable = { version = "0.2.2", features = ["blake2b", "sha2"] }
+rand_08 = { package = "rand", version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

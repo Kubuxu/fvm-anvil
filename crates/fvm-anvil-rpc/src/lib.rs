@@ -43,16 +43,21 @@ impl RpcService {
             Ok(latest) => latest,
             Err(error) => return node_error(error),
         };
+        let earliest = match self.node.block_by_number(BlockSelector::Earliest).await {
+            Ok(Some(block)) => block.number,
+            Ok(None) => return internal_error("canonical genesis block is missing"),
+            Err(error) => return node_error(error),
+        };
         let newest = match params.newest_block {
             BlockSelector::Latest | BlockSelector::Pending => latest,
-            BlockSelector::Earliest => 0,
-            BlockSelector::Number(number) if number <= latest => number,
+            BlockSelector::Earliest => earliest,
+            BlockSelector::Number(number) if (earliest..=latest).contains(&number) => number,
             BlockSelector::Number(number) => {
                 return invalid_params(format!("canonical block number {number} does not exist"));
             }
             BlockSelector::Hash(_) => unreachable!("fee history parser rejects block hashes"),
         };
-        let oldest = newest.saturating_sub(params.block_count.saturating_sub(1));
+        let oldest = newest.saturating_sub(params.block_count.saturating_sub(1)).max(earliest);
         let mut blocks = Vec::with_capacity(
             usize::try_from(newest - oldest + 1).expect("fee history is limited to 1024 blocks"),
         );
