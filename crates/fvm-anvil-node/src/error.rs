@@ -15,8 +15,6 @@ pub enum ConfigError {
     InvalidOfficialBundleRoot(String),
     #[error("the pinned official actor bundle URL is invalid: {0}")]
     InvalidOfficialBundleUrl(String),
-    #[error("local actor bundle root {0} is not a checked-in builtin-actors v18 release root")]
-    UnrecognizedLocalBundleRoot(Cid),
 }
 
 #[derive(Debug, Error)]

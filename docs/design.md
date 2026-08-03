@@ -49,7 +49,10 @@ Proposed defaults:
 - Local chain ID 31337, configurable at initialization and through the compatible runtime method.
 - Filecoin block gas limit of 10,000,000,000.
 
-An alternate `--actor-bundle <path>` is a genesis-time choice. Startup must load the manifest, verify all required actor entries, and reject an incompatible bundle. Near-term direct EVM state mutation assumes the v18 EVM actor state schema; alternate bundles must be schema-compatible unless a versioned state adapter is provided.
+An alternate `--actor-bundle <path>` is a genesis-time choice. Startup trusts the CAR's declared
+root, then loads its manifest and verifies the actor entries required for execution. The user is
+responsible for supplying a bundle compatible with the v18 EVM actor state schema assumed by the
+runtime.
 
 ## Architecture
 

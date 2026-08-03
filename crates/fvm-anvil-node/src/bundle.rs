@@ -49,7 +49,7 @@ pub(crate) fn load_bundle(
             load_car(store, Cursor::new(bytes))
                 .map_err(|error| BundleError::Car(error.to_string()))?
         }
-        ActorBundle::Local { path, .. } => {
+        ActorBundle::Local { path } => {
             let file = File::open(path)
                 .map_err(|source| BundleError::Open { path: path.clone(), source })?;
             load_car(store, BufReader::new(file))
@@ -61,7 +61,9 @@ pub(crate) fn load_bundle(
         [root] => *root,
         roots => return Err(BundleError::RootCount(roots.len()).into()),
     };
-    if actual_root != expected_root {
+    if let Some(expected_root) = expected_root
+        && actual_root != expected_root
+    {
         return Err(BundleError::RootMismatch {
             expected: Box::new(expected_root),
             actual: Box::new(actual_root),
@@ -111,6 +113,7 @@ mod tests {
     use cid::Cid;
     use fvm_ipld_blockstore::MemoryBlockstore;
     use fvm_ipld_car::{CarHeader, CarWriter};
+    use fvm_ipld_encoding::DAG_CBOR;
     use fvm_shared::IPLD_RAW;
     use multihash_codetable::{Code, MultihashDigest};
 
@@ -123,7 +126,7 @@ mod tests {
         let first = test_cid(b"first");
         let second = test_cid(b"second");
         let path = write_header("multiple", vec![first, second]);
-        let selection = ActorBundle::Local { path: path.clone(), expected_root: first };
+        let selection = ActorBundle::local(&path).unwrap();
 
         let result = load_bundle(&selection, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
@@ -132,21 +135,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_car_whose_root_is_not_expected() {
-        let actual = test_cid(b"actual");
-        let expected = test_cid(b"expected");
-        let path = write_header("mismatch", vec![actual]);
-        let selection = ActorBundle::Local { path: path.clone(), expected_root: expected };
+    fn trusts_a_local_cars_declared_root() {
+        let root = Cid::new_v1(DAG_CBOR, Code::Blake2b256.digest(b"unlisted-root"));
+        let path = write_header("unlisted-root", vec![root]);
+        let selection = ActorBundle::local(&path).unwrap();
 
         let result = load_bundle(&selection, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
 
         assert!(matches!(
             result,
-            Err(NodeError::Bundle(BundleError::RootMismatch {
-                expected: found_expected,
-                actual: found_actual,
-            })) if *found_expected == expected && *found_actual == actual
+            Err(NodeError::Bundle(BundleError::MissingManifestInformation(found))) if *found == root
         ));
     }
 

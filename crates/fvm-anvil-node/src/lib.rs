@@ -14,7 +14,7 @@ mod types;
 
 pub use config::{
     ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_ACTOR_BUNDLE_URL,
-    DEFAULT_CHAIN_ID, KNOWN_V18_ACTOR_BUNDLE_ROOTS, NETWORK_VERSION, NodeConfig,
+    DEFAULT_CHAIN_ID, NETWORK_VERSION, NodeConfig,
 };
 pub use error::{BundleError, ConfigError, NodeError};
 pub use service::{NodeHandle, NodeService};

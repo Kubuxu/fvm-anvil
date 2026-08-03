@@ -351,13 +351,11 @@ fn run_worker(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
-    use cid::Cid;
 
     use super::NodeService;
-    use crate::config::{ActorBundle, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_CHAIN_ID, NodeConfig};
+    use crate::config::{ActorBundle, DEFAULT_CHAIN_ID, NodeConfig};
     use crate::error::NodeError;
     use crate::genesis::PREFUNDED_ETH_ADDRESS;
     use crate::types::{BlockSelector, CallRequest, LogFilter};
@@ -365,10 +363,8 @@ mod tests {
     #[test]
     fn startup_reports_bundle_failure_before_returning_service() {
         let missing = PathBuf::from("target/fvm-anvil-node/missing-v18-bundle.car");
-        let expected = Cid::from_str(DEFAULT_ACTOR_BUNDLE_ROOT).unwrap();
         let config =
-            NodeConfig::new(DEFAULT_CHAIN_ID, ActorBundle::local(missing, expected).unwrap())
-                .unwrap();
+            NodeConfig::new(DEFAULT_CHAIN_ID, ActorBundle::local(missing).unwrap()).unwrap();
 
         assert!(matches!(NodeService::start(config), Err(NodeError::Bundle(_))));
     }
@@ -383,9 +379,7 @@ mod tests {
     fn real_service() -> NodeService {
         let path = std::env::var_os("FVM_ANVIL_ACTOR_BUNDLE")
             .expect("set FVM_ANVIL_ACTOR_BUNDLE to the builtin-actors v18 mainnet CAR");
-        let expected = Cid::from_str(DEFAULT_ACTOR_BUNDLE_ROOT).unwrap();
-        let config =
-            NodeConfig::new(DEFAULT_CHAIN_ID, ActorBundle::local(path, expected).unwrap()).unwrap();
+        let config = NodeConfig::new(DEFAULT_CHAIN_ID, ActorBundle::local(path).unwrap()).unwrap();
         NodeService::start(config).unwrap()
     }
 

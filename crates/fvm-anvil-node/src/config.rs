@@ -13,34 +13,19 @@ pub const ACTOR_BUNDLE_VERSION: u32 = 18;
 pub const DEFAULT_ACTOR_BUNDLE_ROOT: &str =
     "bafy2bzacedxsqapxwj5znwy4leem5gsuenhhfyqcntews3yis5iek67thy6lc";
 pub const DEFAULT_ACTOR_BUNDLE_URL: &str = "https://github.com/filecoin-project/builtin-actors/releases/download/v18.0.0/builtin-actors-mainnet.car";
-/// Checked-in Forest actor bundle table entries for builtin-actors v18.0.0.
-///
-/// Keeping this allowlist local makes the v18 state adapter's compatibility boundary explicit
-/// without introducing a production dependency on Forest.
-pub const KNOWN_V18_ACTOR_BUNDLE_ROOTS: [&str; 4] = [
-    "bafy2bzacebkfatnbe6w4rj7lf6gkjh7mywlrpdh2dj6hu2dl4rmtwksszm2hs",
-    "bafy2bzacedg3y3ylp3w4bqmfgyiasrikg3bgfibblc7o4gri3b7j7ftgjhyuu",
-    "bafy2bzaced35gjxagazf2fne5dakbok5abmivsh7cq7huwfuptebgwjmcpcf6",
-    DEFAULT_ACTOR_BUNDLE_ROOT,
-];
-
-fn is_known_v18_bundle_root(root: &Cid) -> bool {
-    let root = root.to_string();
-    KNOWN_V18_ACTOR_BUNDLE_ROOTS.contains(&root.as_str())
-}
 
 /// Selects the builtin-actors v18 CAR used to create genesis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActorBundle {
     /// Downloads the pinned official mainnet v18 CAR and verifies its root.
     Official,
-    /// Reads a checked-in, known v18 release CAR from disk and verifies its root.
-    Local { path: PathBuf, expected_root: Cid },
+    /// Reads a checked-in, known v18 release CAR from disk and verifies its inferred root.
+    Local { path: PathBuf },
 }
 
 impl ActorBundle {
-    pub fn local(path: impl Into<PathBuf>, expected_root: Cid) -> Result<Self, ConfigError> {
-        let bundle = Self::Local { path: path.into(), expected_root };
+    pub fn local(path: impl Into<PathBuf>) -> Result<Self, ConfigError> {
+        let bundle = Self::Local { path: path.into() };
         bundle.validate()?;
         Ok(bundle)
     }
@@ -49,11 +34,12 @@ impl ActorBundle {
         ACTOR_BUNDLE_VERSION
     }
 
-    pub fn expected_root(&self) -> Result<Cid, ConfigError> {
+    pub(crate) fn expected_root(&self) -> Result<Option<Cid>, ConfigError> {
         match self {
             Self::Official => Cid::from_str(DEFAULT_ACTOR_BUNDLE_ROOT)
+                .map(Some)
                 .map_err(|error| ConfigError::InvalidOfficialBundleRoot(error.to_string())),
-            Self::Local { expected_root, .. } => Ok(*expected_root),
+            Self::Local { .. } => Ok(None),
         }
     }
 
@@ -69,7 +55,7 @@ impl ActorBundle {
     pub fn local_path(&self) -> Option<&Path> {
         match self {
             Self::Official => None,
-            Self::Local { path, .. } => Some(path),
+            Self::Local { path } => Some(path),
         }
     }
 
@@ -79,11 +65,8 @@ impl ActorBundle {
                 self.expected_root()?;
                 self.source_url()?;
             }
-            Self::Local { path, .. } if path.as_os_str().is_empty() => {
+            Self::Local { path } if path.as_os_str().is_empty() => {
                 return Err(ConfigError::EmptyBundlePath);
-            }
-            Self::Local { expected_root, .. } if !is_known_v18_bundle_root(expected_root) => {
-                return Err(ConfigError::UnrecognizedLocalBundleRoot(*expected_root));
             }
             Self::Local { .. } => {}
         }
@@ -129,14 +112,9 @@ impl Default for NodeConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_CHAIN_ID, KNOWN_V18_ACTOR_BUNDLE_ROOTS,
-        NETWORK_VERSION, NodeConfig,
-    };
+    use super::{ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_CHAIN_ID, NETWORK_VERSION, NodeConfig};
     use crate::error::ConfigError;
-    use cid::Cid;
     use fvm_shared::version::NetworkVersion;
-    use std::str::FromStr;
 
     #[test]
     fn defaults_identify_nv28_and_actor_bundle_v18() {
@@ -158,22 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn every_checked_in_v18_release_root_is_accepted_for_local_bundles() {
-        for root in KNOWN_V18_ACTOR_BUNDLE_ROOTS {
-            let root = Cid::from_str(root).unwrap();
-            assert!(ActorBundle::local("actors.car", root).is_ok());
-        }
-    }
-
-    #[test]
-    fn local_bundles_reject_roots_outside_the_checked_in_v18_table() {
-        let unknown =
-            Cid::from_str("bafy2bzaceb6j6666h36xnhksu3ww4kxb6e25niayfgkdnifaqi6m6ooc66i6i")
-                .unwrap();
-
-        assert!(matches!(
-            ActorBundle::local("actors.car", unknown),
-            Err(ConfigError::UnrecognizedLocalBundleRoot(root)) if root == unknown
-        ));
+    fn local_bundle_requires_only_a_nonempty_path() {
+        assert_eq!(
+            ActorBundle::local("actors.car").unwrap(),
+            ActorBundle::Local { path: "actors.car".into() }
+        );
+        assert!(matches!(ActorBundle::local(""), Err(ConfigError::EmptyBundlePath)));
     }
 }

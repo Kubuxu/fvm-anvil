@@ -238,8 +238,8 @@ compatibility case and real endpoint smoke test.
 
 Implement a private v18 actor-state adapter, then `anvil_setCode`, `anvil_setStorageAt`, ERC-20
 balance probing, and allowance probing in that dependency order. Every state-schema test names the
-actor bundle and network version explicitly. Alternate bundles are rejected unless a compatible
-adapter exists.
+actor bundle and network version explicitly. Local bundles are trusted as development inputs; the
+user is responsible for selecting one compatible with the active state adapter.
 
 ## Delegation and supervision
 

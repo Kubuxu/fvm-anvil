@@ -4,8 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result, bail};
-use cid::Cid;
+use anyhow::{Context, Result};
 use clap::Parser;
 use fvm_anvil_node::{ActorBundle, DEFAULT_CHAIN_ID, NodeConfig, NodeService};
 use fvm_anvil_rpc::{RpcService, ServerConfig, http_router};
@@ -29,12 +28,8 @@ struct Cli {
     chain_id: u64,
 
     /// Local v18 builtin-actors CAR to use instead of the pinned official bundle.
-    #[arg(long, value_name = "PATH", requires = "actor_bundle_root")]
+    #[arg(long, value_name = "PATH")]
     actor_bundle: Option<PathBuf>,
-
-    /// Expected root CID for the local actor bundle.
-    #[arg(long, value_name = "CID", requires = "actor_bundle")]
-    actor_bundle_root: Option<Cid>,
 
     /// Suppress startup and shutdown diagnostics.
     #[arg(long)]
@@ -52,13 +47,9 @@ impl TryFrom<Cli> for AppConfig {
     type Error = anyhow::Error;
 
     fn try_from(cli: Cli) -> Result<Self> {
-        let actor_bundle = match (cli.actor_bundle, cli.actor_bundle_root) {
-            (None, None) => ActorBundle::Official,
-            (Some(path), Some(expected_root)) => {
-                ActorBundle::local(path, expected_root).context("invalid local actor bundle")?
-            }
-            (Some(_), None) => bail!("--actor-bundle requires --actor-bundle-root"),
-            (None, Some(_)) => bail!("--actor-bundle-root requires --actor-bundle"),
+        let actor_bundle = match cli.actor_bundle {
+            Some(path) => ActorBundle::local(path).context("invalid local actor bundle")?,
+            None => ActorBundle::Official,
         };
         let node =
             NodeConfig::new(cli.chain_id, actor_bundle).context("invalid node configuration")?;
@@ -165,8 +156,6 @@ mod tests {
 
     use super::*;
 
-    const BUNDLE_ROOT: &str = "bafy2bzacedxsqapxwj5znwy4leem5gsuenhhfyqcntews3yis5iek67thy6lc";
-
     #[test]
     fn defaults_select_official_bundle_and_loopback_rpc() {
         let cli = Cli::try_parse_from(["fvm-anvil"]).expect("default arguments must parse");
@@ -179,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn local_bundle_pair_builds_local_genesis_config() {
+    fn local_bundle_builds_local_genesis_config() {
         let cli = Cli::try_parse_from([
             "fvm-anvil",
             "--host",
@@ -190,37 +179,18 @@ mod tests {
             "1234",
             "--actor-bundle",
             "actors.car",
-            "--actor-bundle-root",
-            BUNDLE_ROOT,
             "--quiet",
         ])
         .expect("valid local arguments must parse");
         let config = AppConfig::try_from(cli).expect("local configuration must be valid");
-        let expected_root = BUNDLE_ROOT.parse::<Cid>().expect("test CID must be valid");
 
         assert_eq!(config.listen_addr, "[::1]:9545".parse().expect("address must be valid"));
         assert_eq!(config.node.chain_id(), 1_234);
         assert_eq!(
             config.node.actor_bundle(),
-            &ActorBundle::Local { path: Path::new("actors.car").to_path_buf(), expected_root }
+            &ActorBundle::Local { path: Path::new("actors.car").to_path_buf() }
         );
         assert!(config.quiet);
-    }
-
-    #[test]
-    fn local_bundle_requires_expected_root() {
-        let error = Cli::try_parse_from(["fvm-anvil", "--actor-bundle", "actors.car"])
-            .expect_err("an unverified local bundle must be rejected");
-
-        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
-    }
-
-    #[test]
-    fn bundle_root_requires_local_bundle() {
-        let error = Cli::try_parse_from(["fvm-anvil", "--actor-bundle-root", BUNDLE_ROOT])
-            .expect_err("a root without a local bundle must be rejected");
-
-        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
@@ -229,7 +199,6 @@ mod tests {
             ["fvm-anvil", "--host", "localhost"],
             ["fvm-anvil", "--port", "0"],
             ["fvm-anvil", "--chain-id", "0"],
-            ["fvm-anvil", "--actor-bundle-root", "not-a-cid"],
         ] {
             let error =
                 Cli::try_parse_from(arguments).expect_err("invalid argument must be rejected");

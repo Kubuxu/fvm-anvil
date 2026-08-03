@@ -2394,7 +2394,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "cid",
  "clap",
  "fvm-anvil-node",
  "fvm-anvil-rpc",
