@@ -7,8 +7,8 @@ use alloy_rpc_types_eth::{
     Log as RpcLog, Transaction as RpcTransaction, TransactionReceipt as RpcReceipt,
 };
 use fvm_anvil_node::{
-    Block, FilecoinGasBreakdown, FilecoinStateRoots, Log as NodeLog, Transaction,
-    TransactionReceipt as NodeTransactionReceipt,
+    Block, FilecoinCallTrace, FilecoinGasBreakdown, FilecoinGasCharge, FilecoinGasTrace,
+    FilecoinStateRoots, Log as NodeLog, Transaction, TransactionReceipt as NodeTransactionReceipt,
 };
 use serde_json::{Map, Value, json};
 
@@ -223,6 +223,40 @@ pub fn gas_breakdown(breakdown: FilecoinGasBreakdown) -> Value {
         "refund": quantity(breakdown.refund),
         "gasRefund": quantity(breakdown.gas_refund),
         "gasBurned": quantity(breakdown.gas_burned),
+    })
+}
+
+pub fn gas_trace(trace: FilecoinGasTrace) -> Value {
+    json!({
+        "gasUsed": quantity(trace.gas_used),
+        "exitCode": quantity(trace.exit_code),
+        "failureInfo": trace.failure_info,
+        "gasCharges": trace.gas_charges.into_iter().map(gas_charge).collect::<Vec<_>>(),
+        "calls": trace.calls.into_iter().map(call_trace).collect::<Vec<_>>(),
+    })
+}
+
+fn gas_charge(charge: FilecoinGasCharge) -> Value {
+    json!({
+        "name": charge.name,
+        "computeMilligas": quantity(charge.compute_milligas),
+        "otherMilligas": quantity(charge.other_milligas),
+        "totalMilligas": quantity(charge.total_milligas),
+    })
+}
+
+fn call_trace(call: FilecoinCallTrace) -> Value {
+    json!({
+        "fromActorId": quantity(call.from_actor_id),
+        "to": call.to,
+        "method": quantity(call.method),
+        "gasLimit": quantity(call.gas_limit),
+        "readOnly": call.read_only,
+        "invokedActorId": call.invoked_actor_id.map(quantity),
+        "exitCode": call.exit_code.map(quantity),
+        "syscallError": call.syscall_error,
+        "gasCharges": call.gas_charges.into_iter().map(gas_charge).collect::<Vec<_>>(),
+        "subcalls": call.subcalls.into_iter().map(call_trace).collect::<Vec<_>>(),
     })
 }
 

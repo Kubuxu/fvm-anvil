@@ -101,6 +101,8 @@ pub enum RpcRequest {
     SetAutomine { params: One<bool> },
     #[serde(rename = "filecoin_getGasBreakdown")]
     FilecoinGetGasBreakdown { params: One<B256> },
+    #[serde(rename = "filecoin_getGasTrace")]
+    FilecoinGetGasTrace { params: One<B256> },
     #[serde(rename = "filecoin_getStateRoots")]
     FilecoinGetStateRoots {
         #[serde(default, deserialize_with = "deserialize_empty_params")]

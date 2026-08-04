@@ -22,6 +22,7 @@ pub use config::{
 pub use error::{BundleError, ConfigError, NodeError};
 pub use service::{NodeHandle, NodeService, NodeStartupInfo};
 pub use types::{
-    BASE_FEE_PER_GAS, BLOCK_GAS_LIMIT, Block, BlockSelector, CallRequest, FilecoinGasBreakdown,
-    FilecoinStateRoots, Log, LogFilter, Transaction, TransactionReceipt,
+    BASE_FEE_PER_GAS, BLOCK_GAS_LIMIT, Block, BlockSelector, CallRequest, FilecoinCallTrace,
+    FilecoinGasBreakdown, FilecoinGasCharge, FilecoinGasTrace, FilecoinStateRoots, Log, LogFilter,
+    Transaction, TransactionReceipt,
 };

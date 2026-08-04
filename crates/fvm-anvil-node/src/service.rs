@@ -9,8 +9,8 @@ use crate::config::NodeConfig;
 use crate::error::NodeError;
 use crate::runtime::NodeRuntime;
 use crate::types::{
-    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinStateRoots, Log, LogFilter,
-    Transaction, TransactionReceipt,
+    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinGasTrace, FilecoinStateRoots,
+    Log, LogFilter, Transaction, TransactionReceipt,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -143,6 +143,13 @@ impl NodeHandle {
         hash: B256,
     ) -> Result<Option<FilecoinGasBreakdown>, NodeError> {
         self.request(|reply| WorkerCommand::FilecoinGasBreakdown { hash, reply }).await
+    }
+
+    pub async fn filecoin_gas_trace(
+        &self,
+        hash: B256,
+    ) -> Result<Option<FilecoinGasTrace>, NodeError> {
+        self.request(|reply| WorkerCommand::FilecoinGasTrace { hash, reply }).await
     }
 
     pub async fn filecoin_state_roots(&self) -> Result<FilecoinStateRoots, NodeError> {
@@ -310,6 +317,10 @@ enum WorkerCommand {
         hash: B256,
         reply: Reply<Option<FilecoinGasBreakdown>>,
     },
+    FilecoinGasTrace {
+        hash: B256,
+        reply: Reply<Option<FilecoinGasTrace>>,
+    },
     FilecoinStateRoots {
         reply: Reply<FilecoinStateRoots>,
     },
@@ -405,6 +416,9 @@ fn run_worker(
             WorkerCommand::FilecoinGasBreakdown { hash, reply } => {
                 let _ = reply.send(Ok(runtime.filecoin_gas_breakdown(hash)));
             }
+            WorkerCommand::FilecoinGasTrace { hash, reply } => {
+                let _ = reply.send(Ok(runtime.filecoin_gas_trace(hash)));
+            }
             WorkerCommand::FilecoinStateRoots { reply } => {
                 let _ = reply.send(Ok(runtime.state_roots()));
             }
@@ -424,7 +438,7 @@ mod tests {
         NodeConfig,
     };
     use crate::error::NodeError;
-    use crate::types::{BlockSelector, CallRequest, LogFilter};
+    use crate::types::{BlockSelector, CallRequest, FilecoinCallTrace, LogFilter};
 
     #[test]
     fn startup_reports_bundle_failure_before_returning_service() {
@@ -447,6 +461,16 @@ mod tests {
             .expect("set FVM_ANVIL_ACTOR_BUNDLE to the builtin-actors v18 mainnet CAR");
         let config = NodeConfig::new(DEFAULT_CHAIN_ID, ActorBundle::local(path).unwrap()).unwrap();
         NodeService::start(config).unwrap()
+    }
+
+    fn call_trace_counts(calls: &[FilecoinCallTrace]) -> (usize, usize) {
+        calls.iter().fold((0, 0), |(call_count, charge_count), call| {
+            let (subcall_count, subcall_charge_count) = call_trace_counts(&call.subcalls);
+            (
+                call_count + 1 + subcall_count,
+                charge_count + call.gas_charges.len() + subcall_charge_count,
+            )
+        })
     }
 
     #[tokio::test]
@@ -481,6 +505,21 @@ mod tests {
             receipt.effective_gas_price,
             (gas.base_fee_burn + gas.over_estimation_burn + gas.miner_tip)
                 / U256::from(receipt.gas_used)
+        );
+        let trace = handle.filecoin_gas_trace(hash).await.unwrap().unwrap();
+        assert_eq!(trace.gas_used, receipt.gas_used);
+        assert_eq!(trace.exit_code, receipt.exit_code);
+        assert_eq!(trace.failure_info, None);
+        let (call_count, call_charge_count) = call_trace_counts(&trace.calls);
+        assert!(call_count > 1, "contract creation should contain nested actor calls");
+        assert!(
+            trace.gas_charges.len() + call_charge_count > 0,
+            "a traced transaction should retain its gas charges"
+        );
+        assert_eq!(
+            handle.filecoin_gas_trace(B256::ZERO).await.unwrap(),
+            None,
+            "unknown transaction hashes do not have traces"
         );
         let contract = receipt.contract_address.unwrap();
         assert_eq!(

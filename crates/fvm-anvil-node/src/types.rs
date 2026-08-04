@@ -128,3 +128,40 @@ pub struct FilecoinGasBreakdown {
     pub gas_refund: u64,
     pub gas_burned: u64,
 }
+
+/// Exact gas charged at one ref-FVM charging point.
+///
+/// The values use ref-FVM's internal milligas unit so aggregating repeated charges does not lose
+/// precision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilecoinGasCharge {
+    pub name: String,
+    pub compute_milligas: u64,
+    pub other_milligas: u64,
+    pub total_milligas: u64,
+}
+
+/// One actor invocation and its directly attributable gas charges.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilecoinCallTrace {
+    pub from_actor_id: u64,
+    pub to: String,
+    pub method: u64,
+    pub gas_limit: u64,
+    pub read_only: bool,
+    pub invoked_actor_id: Option<u64>,
+    pub exit_code: Option<u32>,
+    pub syscall_error: Option<String>,
+    pub gas_charges: Vec<FilecoinGasCharge>,
+    pub subcalls: Vec<FilecoinCallTrace>,
+}
+
+/// Compact ref-FVM execution and gas trace for one committed transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilecoinGasTrace {
+    pub gas_used: u64,
+    pub exit_code: u32,
+    pub failure_info: Option<String>,
+    pub gas_charges: Vec<FilecoinGasCharge>,
+    pub calls: Vec<FilecoinCallTrace>,
+}

@@ -284,6 +284,13 @@ impl RpcService {
                     Err(error) => node_error(error),
                 }
             }
+            RpcRequest::FilecoinGetGasTrace { params } => {
+                match self.node.filecoin_gas_trace(params.0).await {
+                    Ok(Some(trace)) => ResponseResult::success(response::gas_trace(trace)),
+                    Ok(None) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
             RpcRequest::FilecoinGetStateRoots { .. } => {
                 match self.node.filecoin_state_roots().await {
                     Ok(roots) => ResponseResult::success(response::state_roots(roots)),
@@ -365,6 +372,7 @@ fn is_known_method(method: &str) -> bool {
             | "anvil_setAutomine"
             | "evm_setAutomine"
             | "filecoin_getGasBreakdown"
+            | "filecoin_getGasTrace"
             | "filecoin_getStateRoots"
     )
 }
@@ -401,6 +409,7 @@ fn static_response(request: &RpcRequest) -> Option<Value> {
         | RpcRequest::EvmMine { .. }
         | RpcRequest::SetAutomine { .. }
         | RpcRequest::FilecoinGetGasBreakdown { .. }
+        | RpcRequest::FilecoinGetGasTrace { .. }
         | RpcRequest::FilecoinGetStateRoots { .. } => None,
     }
 }
@@ -457,7 +466,10 @@ mod tests {
     use super::*;
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256, address, b256, hex};
     use anvil_rpc::request::{Id, Version};
-    use fvm_anvil_node::{Block, FilecoinGasBreakdown, Log, Transaction, TransactionReceipt};
+    use fvm_anvil_node::{
+        Block, FilecoinCallTrace, FilecoinGasBreakdown, FilecoinGasCharge, FilecoinGasTrace, Log,
+        Transaction, TransactionReceipt,
+    };
     use serde_json::Map;
 
     const CREATION: &[u8] = &hex!(
@@ -506,6 +518,7 @@ mod tests {
             ("anvil_setAutomine", json!([false])),
             ("evm_setAutomine", json!([true])),
             ("filecoin_getGasBreakdown", json!([hash])),
+            ("filecoin_getGasTrace", json!([hash])),
             ("filecoin_getStateRoots", json!([])),
         ];
 
@@ -732,6 +745,82 @@ mod tests {
             json!({
                 "prepared": prepared.to_string(),
                 "current": current.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn filecoin_gas_trace_preserves_exact_charge_units_and_call_tree() {
+        let trace = response::gas_trace(FilecoinGasTrace {
+            gas_used: 7,
+            exit_code: 0,
+            failure_info: None,
+            gas_charges: vec![FilecoinGasCharge {
+                name: "OnChainMessage".to_owned(),
+                compute_milligas: 1,
+                other_milligas: 2,
+                total_milligas: 3,
+            }],
+            calls: vec![FilecoinCallTrace {
+                from_actor_id: 100,
+                to: "f010".to_owned(),
+                method: 4,
+                gas_limit: 5,
+                read_only: false,
+                invoked_actor_id: Some(10),
+                exit_code: Some(0),
+                syscall_error: None,
+                gas_charges: Vec::new(),
+                subcalls: vec![FilecoinCallTrace {
+                    from_actor_id: 10,
+                    to: "f0100".to_owned(),
+                    method: 1,
+                    gas_limit: 2,
+                    read_only: true,
+                    invoked_actor_id: None,
+                    exit_code: None,
+                    syscall_error: Some("actor not found".to_owned()),
+                    gas_charges: Vec::new(),
+                    subcalls: Vec::new(),
+                }],
+            }],
+        });
+
+        assert_eq!(
+            trace,
+            json!({
+                "gasUsed": "0x7",
+                "exitCode": "0x0",
+                "failureInfo": null,
+                "gasCharges": [{
+                    "name": "OnChainMessage",
+                    "computeMilligas": "0x1",
+                    "otherMilligas": "0x2",
+                    "totalMilligas": "0x3",
+                }],
+                "calls": [{
+                    "fromActorId": "0x64",
+                    "to": "f010",
+                    "method": "0x4",
+                    "gasLimit": "0x5",
+                    "readOnly": false,
+                    "invokedActorId": "0xa",
+                    "exitCode": "0x0",
+                    "syscallError": null,
+                    "gasCharges": [],
+                    "subcalls": [{
+                        "fromActorId": "0xa",
+                        "to": "f0100",
+                        "method": "0x1",
+                        "gasLimit": "0x2",
+                        "readOnly": true,
+                        "invokedActorId": null,
+                        "exitCode": null,
+                        "syscallError": "actor not found",
+                        "gasCharges": [],
+                        "subcalls": [],
+                    }],
+                }],
             })
         );
     }

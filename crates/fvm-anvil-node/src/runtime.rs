@@ -12,6 +12,7 @@ use fvm::executor::{ApplyKind, ApplyRet, DefaultExecutor, Executor};
 use fvm::kernel::filecoin::DefaultFilecoinKernel;
 use fvm::machine::{DefaultMachine, NetworkConfig};
 use fvm::state_tree::{ActorState, StateTree};
+use fvm::trace::ExecutionEvent;
 use fvm_anvil_eth::{
     BridgedTransaction, ExecutionKind, UnsignedCall, build_unsigned_message,
     decode_execution_return, decode_revert_data, decode_signed, delegated_chain_length,
@@ -38,8 +39,8 @@ use crate::externs::DeterministicExterns;
 use crate::genesis::{GenesisOutput, PrefundedAccount, create_genesis, fund_development_accounts};
 use crate::storage::RuntimeBlockstore;
 use crate::types::{
-    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinStateRoots, Log, LogFilter,
-    Transaction, TransactionReceipt,
+    Block, BlockSelector, CallRequest, FilecoinCallTrace, FilecoinGasBreakdown, FilecoinGasCharge,
+    FilecoinGasTrace, FilecoinStateRoots, Log, LogFilter, Transaction, TransactionReceipt,
 };
 
 type RuntimeMachine = DefaultMachine<Rc<RuntimeBlockstore>, DeterministicExterns>;
@@ -70,6 +71,7 @@ struct SnapshotState {
     transactions: HashMap<B256, Transaction>,
     receipts: HashMap<B256, TransactionReceipt>,
     gas_breakdowns: HashMap<B256, FilecoinGasBreakdown>,
+    gas_traces: HashMap<B256, FilecoinGasTrace>,
     next_epoch: i64,
     next_timestamp: u64,
 }
@@ -265,6 +267,7 @@ pub(crate) struct NodeRuntime {
     transactions: HashMap<B256, Transaction>,
     receipts: HashMap<B256, TransactionReceipt>,
     gas_breakdowns: HashMap<B256, FilecoinGasBreakdown>,
+    gas_traces: HashMap<B256, FilecoinGasTrace>,
     pool: VecDeque<PendingTransaction>,
     automine: bool,
     startup_mining_mode_changed: bool,
@@ -385,6 +388,7 @@ impl NodeRuntime {
             transactions: HashMap::new(),
             receipts: HashMap::new(),
             gas_breakdowns: HashMap::new(),
+            gas_traces: HashMap::new(),
             pool: VecDeque::new(),
             automine: config.automine(),
             startup_mining_mode_changed: false,
@@ -393,7 +397,12 @@ impl NodeRuntime {
             snapshots: HashMap::new(),
             next_snapshot_id: 1,
         };
-        drop(runtime.new_executor_at(initial.current_root, initial.epoch, initial.timestamp)?);
+        drop(runtime.new_executor_at(
+            initial.current_root,
+            initial.epoch,
+            initial.timestamp,
+            false,
+        )?);
         Ok(runtime)
     }
 
@@ -653,6 +662,7 @@ impl NodeRuntime {
             transactions: self.transactions.clone(),
             receipts: self.receipts.clone(),
             gas_breakdowns: self.gas_breakdowns.clone(),
+            gas_traces: self.gas_traces.clone(),
             next_epoch: self.next_epoch,
             next_timestamp: self.next_timestamp,
         };
@@ -671,6 +681,7 @@ impl NodeRuntime {
         self.transactions = snapshot.transactions;
         self.receipts = snapshot.receipts;
         self.gas_breakdowns = snapshot.gas_breakdowns;
+        self.gas_traces = snapshot.gas_traces;
         self.next_epoch = snapshot.next_epoch;
         self.next_timestamp = snapshot.next_timestamp;
         for pending in current_pool {
@@ -684,6 +695,10 @@ impl NodeRuntime {
 
     pub(crate) fn filecoin_gas_breakdown(&self, hash: B256) -> Option<FilecoinGasBreakdown> {
         self.gas_breakdowns.get(&hash).cloned()
+    }
+
+    pub(crate) fn filecoin_gas_trace(&self, hash: B256) -> Option<FilecoinGasTrace> {
+        self.gas_traces.get(&hash).cloned()
     }
 
     fn validate_pool_admission(&self, transaction: &BridgedTransaction) -> Result<(), NodeError> {
@@ -795,7 +810,7 @@ impl NodeRuntime {
         };
         let message = build_unsigned_message(&call)?;
         let serialized_length = delegated_chain_length(&message)?;
-        let mut executor = self.new_executor_at(execution_root, epoch, timestamp)?;
+        let mut executor = self.new_executor_at(execution_root, epoch, timestamp, false)?;
         let apply = executor
             .execute_message(message, ApplyKind::Explicit, serialized_length)
             .map_err(|error| NodeError::Execution(error.to_string()))?;
@@ -840,7 +855,7 @@ impl NodeRuntime {
             self.current_root
         } else {
             let mut executor =
-                self.new_executor_at(self.current_root, self.next_epoch, first_timestamp)?;
+                self.new_executor_at(self.current_root, self.next_epoch, first_timestamp, true)?;
             for transaction in &self.pool {
                 let apply = executor
                     .execute_message(
@@ -865,6 +880,7 @@ impl NodeRuntime {
         let mut transactions = Vec::with_capacity(pending_len);
         let mut receipts = Vec::with_capacity(pending_len);
         let mut gas_breakdowns = Vec::with_capacity(pending_len);
+        let mut gas_traces = Vec::with_capacity(pending_len);
         let mut block_logs = Vec::new();
         let mut cumulative_gas_used = 0_u64;
         let mut next_log_index = 0_u64;
@@ -919,6 +935,7 @@ impl NodeRuntime {
             block_logs.extend(logs.iter().cloned());
 
             let gas = filecoin_gas_breakdown(apply)?;
+            let trace = filecoin_gas_trace(apply);
             let effective_gas_price = effective_gas_price(&gas, apply.msg_receipt.gas_used)?;
             transaction.effective_gas_price = Some(effective_gas_price);
             let receipt = TransactionReceipt {
@@ -942,6 +959,7 @@ impl NodeRuntime {
             transactions.push(transaction);
             receipts.push(receipt);
             gas_breakdowns.push(gas);
+            gas_traces.push(trace);
         }
 
         let first_block = Block {
@@ -985,13 +1003,14 @@ impl NodeRuntime {
         for record in &records {
             self.block_numbers_by_hash.insert(record.block.hash, record.block.number);
         }
-        for ((transaction, receipt), gas) in
-            transactions.into_iter().zip(receipts).zip(gas_breakdowns)
+        for (((transaction, receipt), gas), trace) in
+            transactions.into_iter().zip(receipts).zip(gas_breakdowns).zip(gas_traces)
         {
             let hash = transaction.hash;
             self.transactions.insert(hash, transaction);
             self.receipts.insert(hash, receipt);
             self.gas_breakdowns.insert(hash, gas);
+            self.gas_traces.insert(hash, trace);
         }
         for _ in 0..pending_len {
             self.pool.pop_front();
@@ -1161,9 +1180,13 @@ impl NodeRuntime {
         root: Cid,
         epoch: i64,
         timestamp: u64,
+        tracing: bool,
     ) -> Result<RuntimeExecutor, NodeError> {
         let mut context = self.network.for_epoch(epoch, timestamp, root);
         context.set_base_fee(TokenAmount::from_atto(self.base_fee_per_gas));
+        if tracing {
+            context.enable_tracing();
+        }
         let machine = DefaultMachine::new(&context, Rc::clone(&self.store), DeterministicExterns)
             .map_err(|error| NodeError::Runtime(error.to_string()))?;
         DefaultExecutor::new(self.engine_pool.clone(), machine)
@@ -1283,6 +1306,84 @@ fn filecoin_gas_breakdown(apply: &ApplyRet) -> Result<FilecoinGasBreakdown, Node
         gas_refund: apply.gas_refund,
         gas_burned: apply.gas_burned,
     })
+}
+
+fn filecoin_gas_trace(apply: &ApplyRet) -> FilecoinGasTrace {
+    let mut gas_charges = Vec::new();
+    let mut calls = Vec::new();
+    let mut stack = Vec::<FilecoinCallTrace>::new();
+
+    for event in &apply.exec_trace {
+        match event {
+            ExecutionEvent::GasCharge(charge) => {
+                let charge = FilecoinGasCharge {
+                    name: charge.name.to_string(),
+                    compute_milligas: charge.compute_gas.as_milligas(),
+                    other_milligas: charge.other_gas.as_milligas(),
+                    total_milligas: charge.total().as_milligas(),
+                };
+                if let Some(call) = stack.last_mut() {
+                    call.gas_charges.push(charge);
+                } else {
+                    gas_charges.push(charge);
+                }
+            }
+            ExecutionEvent::Call { from, to, method, gas_limit, read_only, .. } => {
+                stack.push(FilecoinCallTrace {
+                    from_actor_id: *from,
+                    to: to.to_string(),
+                    method: *method,
+                    gas_limit: *gas_limit,
+                    read_only: *read_only,
+                    invoked_actor_id: None,
+                    exit_code: None,
+                    syscall_error: None,
+                    gas_charges: Vec::new(),
+                    subcalls: Vec::new(),
+                })
+            }
+            ExecutionEvent::CallReturn(exit_code, _) => {
+                if let Some(call) = stack.last_mut() {
+                    call.exit_code = Some(exit_code.value());
+                }
+                finish_trace_call(&mut stack, &mut calls);
+            }
+            ExecutionEvent::CallError(error) => {
+                if let Some(call) = stack.last_mut() {
+                    call.syscall_error = Some(error.to_string());
+                }
+                finish_trace_call(&mut stack, &mut calls);
+            }
+            ExecutionEvent::InvokeActor { id, .. } => {
+                if let Some(call) = stack.last_mut() {
+                    call.invoked_actor_id = Some(*id);
+                }
+            }
+            _ => {}
+        }
+    }
+    while !stack.is_empty() {
+        finish_trace_call(&mut stack, &mut calls);
+    }
+
+    FilecoinGasTrace {
+        gas_used: apply.msg_receipt.gas_used,
+        exit_code: apply.msg_receipt.exit_code.value(),
+        failure_info: apply.failure_info.as_ref().map(ToString::to_string),
+        gas_charges,
+        calls,
+    }
+}
+
+fn finish_trace_call(stack: &mut Vec<FilecoinCallTrace>, calls: &mut Vec<FilecoinCallTrace>) {
+    let Some(call) = stack.pop() else {
+        return;
+    };
+    if let Some(parent) = stack.last_mut() {
+        parent.subcalls.push(call);
+    } else {
+        calls.push(call);
+    }
 }
 
 fn effective_gas_price(gas: &FilecoinGasBreakdown, gas_used: u64) -> Result<U256, NodeError> {

@@ -230,14 +230,20 @@ FEVM contract context also follows Filecoin behavior:
 - `COINBASE` returns zero.
 - `BLOCKHASH` is derived from a synthetic tipset CID.
 
-Standard receipts cannot expose the full model. Separate Filecoin endpoints should expose `ApplyRet` fields and `ExecutionEvent::GasCharge` entries, including compute gas, other gas, burns, refund, tip, penalty, failure information, and optional elapsed time. Candidate methods include:
+Standard receipts cannot expose the full model. Filecoin-specific diagnostics use separate RPC
+methods:
 
-- `filecoin_getGasBreakdown`
-- `filecoin_getStateRoots`
+- `filecoin_getGasBreakdown` returns the exact `ApplyRet` fee, burn, refund, and penalty fields for
+  a committed Ethereum transaction hash.
+- `filecoin_getGasTrace` returns a compact nested actor-call trace for a committed Ethereum
+  transaction hash. Each call owns its ordered ref-FVM gas charges and subcalls. Charge values are
+  exact milligas (`computeMilligas`, `otherMilligas`, and `totalMilligas`); the top-level `gasUsed`
+  remains whole FVM gas. Timing, parameters, return bytes, invocation logs, and IPLD events are
+  intentionally omitted so the stable JSON is suitable for external aggregation scripts.
+- `filecoin_getStateRoots` returns the prepared and current roots.
 
-Gas traces and message CID inspection remain candidate additions.
-
-The two implemented method names above are fixed RPC contracts.
+These three method names and response contracts are fixed. Trace capture is enabled only for
+canonical transaction execution; calls and gas-estimation simulations do not pay its overhead.
 
 Opcode-level Geth/Foundry traces are unavailable because the builtin EVM interpreter does not currently expose opcode tracing. FVM execution and gas-charge traces remain available.
 
