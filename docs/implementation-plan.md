@@ -7,6 +7,11 @@ This document is the current execution plan for the architecture recorded in `do
 It defines component ownership, dependency direction, implementation waves, delegation boundaries,
 and the evidence required before each wave is complete. Design rationale and compatibility findings
 remain in `docs/design.md`.
+
+Offline mainnet-state preparation and its proposed `press` tool are tracked in
+[`docs/press.md`](press.md). Those stages extend this plan only after the current four-crate runtime
+has a concrete shared state-format boundary.
+
 ## Current status
 
 Waves 0-3 are implemented. Waves 4-5 remain planned scope.

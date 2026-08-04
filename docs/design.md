@@ -32,7 +32,9 @@ Explicitly out of scope:
 - Full Filecoin consensus, mining, cron, null rounds, actor migrations, proofs, or tipset competition.
 - General native actor behavior beyond the actors mechanically required by FVM execution.
 
-Chain forking is desired but parked. Its design is intentionally unresolved; no conclusion about the eventual implementation or upstream interface is recorded here.
+General remote chain forking remains parked. Offline preparation of selected mainnet actor state for
+local execution is planned separately in [`docs/press.md`](press.md); it does not import consensus
+history or define remote RPC forking behavior.
 
 ## Versions and default environment
 
