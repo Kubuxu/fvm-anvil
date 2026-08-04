@@ -2,3 +2,4 @@ extern
 /target/
 /tests/acceptance/cache/
 /tests/acceptance/out/
+snapshots
