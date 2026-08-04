@@ -165,7 +165,11 @@ pub fn build_prepared_archive<BS: Blockstore>(
 fn sync_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        File::open(parent)?.sync_all()
     }
     #[cfg(not(unix))]
     {
@@ -189,6 +193,12 @@ mod tests {
 
     use super::*;
     use crate::state::ActorSelector;
+
+    #[cfg(unix)]
+    #[test]
+    fn syncs_current_directory_for_bare_output_path() {
+        sync_parent(Path::new("archive.press.car.zst")).unwrap();
+    }
 
     #[derive(Serialize_tuple)]
     struct SystemState {

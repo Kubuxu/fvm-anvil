@@ -97,7 +97,10 @@ impl ForestCarWriter {
             return Err(ForestCarWriterError::NoRoots);
         }
         let output_path = output.as_ref().to_path_buf();
-        let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = output_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         let stem = output_path.file_name().and_then(|name| name.to_str()).unwrap_or("forest.car");
         let mut cleanup = ScratchCleanup::default();
         let (output_temp_path, output_file) = cleanup.create(parent, stem, "output")?;
@@ -478,7 +481,10 @@ fn summary(cid: &Cid) -> u64 {
 
 #[cfg(unix)]
 fn sync_parent(path: &Path) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     File::open(parent)?.sync_all()
 }
 
@@ -492,6 +498,12 @@ mod tests {
     use super::*;
     use crate::forest_car::ForestCar;
     use fvm_ipld_blockstore::Blockstore;
+
+    #[cfg(unix)]
+    #[test]
+    fn syncs_current_directory_for_bare_output_path() {
+        sync_parent(Path::new("archive.forest.car.zst")).unwrap();
+    }
 
     fn collision_cids() -> (Cid, Cid) {
         let first = [1_u8; 8];
