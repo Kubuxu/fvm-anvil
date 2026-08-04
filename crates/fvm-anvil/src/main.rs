@@ -110,11 +110,11 @@ struct Cli {
     chain_id: u64,
 
     /// Timestamp of the synthetic genesis block.
-    #[arg(long, default_value_t = DEFAULT_GENESIS_TIMESTAMP)]
+    #[arg(long, default_value_t = DEFAULT_GENESIS_TIMESTAMP, conflicts_with = "state")]
     timestamp: u64,
 
     /// Number of the synthetic genesis block.
-    #[arg(long, default_value_t = DEFAULT_GENESIS_BLOCK_NUMBER)]
+    #[arg(long, default_value_t = DEFAULT_GENESIS_BLOCK_NUMBER, conflicts_with = "state")]
     number: u64,
 
     /// Filecoin block gas limit exposed through Ethereum RPC.
@@ -130,7 +130,8 @@ struct Cli {
     #[arg(
         long = "block-base-fee-per-gas",
         visible_alias = "base-fee",
-        default_value_t = DEFAULT_BASE_FEE_PER_GAS
+        default_value_t = DEFAULT_BASE_FEE_PER_GAS,
+        conflicts_with = "state"
     )]
     base_fee_per_gas: u128,
 
@@ -155,6 +156,10 @@ struct Cli {
     /// Local v18 builtin-actors CAR to use instead of the pinned official bundle.
     #[arg(long, value_name = "PATH")]
     actor_bundle: Option<PathBuf>,
+
+    /// Prepared Press state archive to use as the initial Filecoin state.
+    #[arg(long, value_name = "PRESS_ARCHIVE")]
+    state: Option<PathBuf>,
 
     /// CORS allow-origin header value.
     #[arg(long, default_value = "*", conflicts_with = "no_cors")]
@@ -252,6 +257,8 @@ impl TryFrom<Cli> for AppConfig {
         let node = NodeConfig::new(cli.chain_id, actor_bundle)
             .context("invalid node configuration")?
             .with_actor_bundle_cache(actor_bundle_cache)
+            .with_prepared_state(cli.state)
+            .context("invalid prepared-state configuration")?
             .with_genesis_accounts(genesis_accounts.clone())
             .with_genesis_block(cli.number, cli.timestamp)
             .context("invalid genesis block configuration")?
@@ -435,15 +442,17 @@ async fn run(config: AppConfig) -> Result<()> {
         quiet,
     } = config;
     let chain_id = node.chain_id();
-    let genesis_number = node.genesis_block_number();
-    let genesis_timestamp = node.genesis_timestamp();
     let block_gas_limit = node.block_gas_limit();
-    let base_fee_per_gas = node.base_fee_per_gas();
 
-    // NodeService::start does not return until genesis and the worker are ready. Binding only after
-    // that point ensures invalid genesis configuration never exposes an RPC transport.
+    // NodeService::start does not return until state initialization and the worker are ready.
+    // Binding only after that point ensures invalid genesis or prepared state never exposes RPC.
     let service = NodeService::start(node).context("failed to start node")?;
-    let actor_bundle_root = service.startup_info().actor_bundle_root();
+    let startup = service.startup_info();
+    let actor_bundle_root = startup.actor_bundle_root();
+    let state_roots = startup.state_roots();
+    let genesis_number = startup.initial_block_number();
+    let genesis_timestamp = startup.initial_timestamp();
+    let base_fee_per_gas = startup.base_fee_per_gas();
     let handle = service.handle();
     let listener = tokio::net::TcpListener::bind(listen_addr)
         .await
@@ -463,6 +472,8 @@ async fn run(config: AppConfig) -> Result<()> {
         block_gas_limit,
         base_fee_per_gas,
         actor_bundle_root: actor_bundle_root.to_string(),
+        prepared_state_root: state_roots.prepared.map(|root| root.to_string()),
+        current_state_root: state_roots.current.to_string(),
         mining,
         rpc_url: &rpc_url,
     };
@@ -524,6 +535,8 @@ struct StartupOutput<'a> {
     block_gas_limit: u64,
     base_fee_per_gas: u128,
     actor_bundle_root: String,
+    prepared_state_root: Option<String>,
+    current_state_root: String,
     mining: MiningMode,
     rpc_url: &'a str,
 }
@@ -559,10 +572,15 @@ fn render_banner(mut writer: impl io::Write, output: &StartupOutput<'_>) -> io::
     writeln!(writer, "Network version: {NETWORK_VERSION}")?;
     writeln!(writer, "Actor bundle version: {ACTOR_BUNDLE_VERSION}")?;
     writeln!(writer, "Actor bundle root: {}", output.actor_bundle_root)?;
+    match &output.prepared_state_root {
+        Some(root) => writeln!(writer, "Prepared state root: {root}")?,
+        None => writeln!(writer, "Prepared state root: none")?,
+    }
+    writeln!(writer, "Current state root: {}", output.current_state_root)?;
     writeln!(writer, "Base fee: {} attoFIL/gas", output.base_fee_per_gas)?;
     writeln!(writer, "Block gas limit: {}", output.block_gas_limit)?;
-    writeln!(writer, "Genesis timestamp: {}", output.genesis_timestamp)?;
-    writeln!(writer, "Genesis number: {}", output.genesis_number)?;
+    writeln!(writer, "Initial timestamp: {}", output.genesis_timestamp)?;
+    writeln!(writer, "Initial block number: {}", output.genesis_number)?;
     writeln!(writer, "Mining mode: {}", mining_mode_name(output.mining))?;
     writeln!(writer)?;
     writeln!(writer, "Listening on {}", output.rpc_url)
@@ -603,6 +621,8 @@ struct FilecoinFile<'a> {
     network_version: u32,
     actor_bundle_version: u32,
     actor_bundle_root: &'a str,
+    prepared_state_root: Option<&'a str>,
+    current_state_root: &'a str,
     mining_mode: &'static str,
 }
 
@@ -630,6 +650,8 @@ fn write_config_file(path: &Path, output: &StartupOutput<'_>) -> Result<()> {
             network_version: NETWORK_VERSION.into(),
             actor_bundle_version: ACTOR_BUNDLE_VERSION,
             actor_bundle_root: &output.actor_bundle_root,
+            prepared_state_root: output.prepared_state_root.as_deref(),
+            current_state_root: &output.current_state_root,
             mining_mode: mining_mode_name(output.mining),
         },
     };
@@ -687,6 +709,7 @@ mod tests {
             config.node.genesis_accounts()[0].ethereum()
         );
         assert_eq!(config.mining, MiningMode::Instant);
+        assert!(config.node.prepared_state().is_none());
         assert!(!config.quiet);
     }
 
@@ -733,6 +756,23 @@ mod tests {
         assert!(!config.node.automine());
         assert_eq!(config.mining, MiningMode::Manual);
         assert!(config.quiet);
+    }
+
+    #[test]
+    fn prepared_state_is_genesis_time_configuration() {
+        let cli = Cli::try_parse_from(["fvm-anvil", "--state", "prepared.press.car.zst"]).unwrap();
+        let config = AppConfig::try_from(cli).unwrap();
+
+        assert_eq!(config.node.prepared_state(), Some(Path::new("prepared.press.car.zst")));
+        let error = Cli::try_parse_from([
+            "fvm-anvil",
+            "--state",
+            "prepared.press.car.zst",
+            "--timestamp",
+            "1",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -809,6 +849,8 @@ mod tests {
             block_gas_limit: config.node.block_gas_limit(),
             base_fee_per_gas: config.node.base_fee_per_gas(),
             actor_bundle_root: "bafy-test".to_owned(),
+            prepared_state_root: Some("bafy-prepared".to_owned()),
+            current_state_root: "bafy-current".to_owned(),
             mining: config.mining,
             rpc_url: "http://127.0.0.1:8545",
         };
@@ -824,5 +866,7 @@ mod tests {
         assert_eq!(value["base_fee"], DEFAULT_BASE_FEE_PER_GAS.to_string());
         assert_eq!(value["filecoin"]["network_version"], 28);
         assert_eq!(value["filecoin"]["actor_bundle_root"], "bafy-test");
+        assert_eq!(value["filecoin"]["prepared_state_root"], "bafy-prepared");
+        assert_eq!(value["filecoin"]["current_state_root"], "bafy-current");
     }
 }

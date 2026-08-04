@@ -17,6 +17,8 @@ pub enum ConfigError {
     InvalidBlockGasLimit(u64),
     #[error("the local actor bundle path is empty")]
     EmptyBundlePath,
+    #[error("the prepared-state path is empty")]
+    EmptyPreparedStatePath,
     #[error("the pinned official actor bundle root is invalid: {0}")]
     InvalidOfficialBundleRoot(String),
     #[error("the pinned official actor bundle URL is invalid: {0}")]
@@ -59,6 +61,8 @@ pub enum NodeError {
     Bridge(#[from] fvm_anvil_eth::BridgeError),
     #[error("genesis initialization failed: {0}")]
     Genesis(String),
+    #[error("failed to load prepared state from {path}: {detail}")]
+    PreparedState { path: PathBuf, detail: String },
     #[error("FVM runtime initialization failed: {0}")]
     Runtime(String),
     #[error("FVM execution failed: {0}")]

@@ -1,4 +1,6 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
+
+use cid::Cid;
 /// Fixed genesis and synthetic-block base fee, in attoFIL per gas unit.
 pub const BASE_FEE_PER_GAS: u128 = 100;
 /// Maximum sum of Filecoin gas limits admitted to one synthetic block.
@@ -106,6 +108,13 @@ pub struct LogFilter {
     pub to_block: Option<BlockSelector>,
     pub addresses: Vec<Address>,
     pub topics: [Option<Vec<B256>>; 4],
+}
+
+/// Prepared import root and the currently adopted writable execution root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FilecoinStateRoots {
+    pub prepared: Option<Cid>,
+    pub current: Cid,
 }
 
 /// The exact ref-FVM gas accounting fields for a committed transaction.

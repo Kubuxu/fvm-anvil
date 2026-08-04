@@ -10,36 +10,40 @@ remain in `docs/design.md`.
 
 Offline mainnet-state preparation and the active `press` tool are tracked in
 [`docs/press.md`](press.md). The shared `fvm-anvil-state` crate owns its prepared-state format and
-ForestCAR storage; node import remains the next integration boundary.
+ForestCAR storage. Prepared-state node import is delivered; writable-overlay persistence is next.
 
 ## Current status
 
-Waves 0-3 are implemented. Waves 4-5 remain planned scope.
+Waves 0-3 and Press stages 1-4 are implemented. Waves 4-5 and writable-overlay persistence remain
+planned scope.
 
-Observed evidence: 14 bridge unit tests pass; deterministic node tests pass; three ignored
-real-bundle NV28/v18 transaction, mining, simulation, and snapshot tests pass; nine RPC tests
-pass; and five CLI tests pass. The actual
-binary was exercised over HTTP: Forge deployed NarrowSlice, Cast called and mutated it, and the
-resulting event, receipt, transaction, and block were projected correctly. The endpoint also
-returned the Filecoin gas breakdown, and snapshot/revert restored state and canonical index
-visibility. Workspace formatting, Clippy, and the workspace test suite remain final follow-up
-validation and are not asserted complete here.
+Observed evidence: the workspace has 97 passing tests and three ignored real-bundle tests;
+workspace formatting and strict Clippy pass. The release binary was exercised over HTTP against
+patched mainnet WFIL state at epoch 6,251,280. It mounted the prepared ForestCAR without the source
+snapshot, funded the deterministic development caller, exposed patched code and storage, executed
+an EIP-1559 transaction, returned a successful receipt and Filecoin gas breakdown, and reported
+distinct prepared and advancing current state roots. The existing NarrowSlice deployment,
+transaction, event, snapshot, and canonical-index acceptance evidence also remains valid.
 
 
 ## Architectural decision
 
-The workspace has four crates:
+The workspace has six crates:
 
 ```text
+press                     offline snapshot selection, patching, and prepared archive output
+  └── fvm-anvil-state     ForestCAR and prepared-state formats
+
 fvm-anvil                 CLI, configuration, process lifetime, and graceful shutdown
   ├── fvm-anvil-rpc       JSON-RPC wire parsing, handlers, response conversion, and transport
   │     └── fvm-anvil-node
   └── fvm-anvil-node      sole owner of mutable execution and synthetic chain state
-        └── fvm-anvil-eth pure Ethereum-to-Filecoin protocol bridge
+        ├── fvm-anvil-eth pure Ethereum-to-Filecoin protocol bridge
+        └── fvm-anvil-state
 ```
 
-There is no shared types crate. Types belong to the lowest crate that owns their invariants. A new
-crate or trait is added only when a demonstrated dependency boundary requires it.
+Protocol types belong to the lowest crate that owns their invariants. The state crate exists for the
+demonstrated on-disk format boundary shared by `press` and the node; it does not own live execution.
 
 Production crates must not depend on Forest, `anvil-core`, the main `anvil` crate, `revm`, or the
 ref-FVM integration harness. Forest, Foundry, ref-FVM integration tests, and builtin actor sources

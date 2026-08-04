@@ -109,6 +109,7 @@ pub struct NodeConfig {
     chain_id: u64,
     actor_bundle: ActorBundle,
     actor_bundle_cache: Option<PathBuf>,
+    prepared_state: Option<PathBuf>,
     genesis_accounts: Vec<GenesisAccount>,
     genesis_block_number: u64,
     genesis_timestamp: u64,
@@ -127,6 +128,7 @@ impl NodeConfig {
             chain_id,
             actor_bundle,
             actor_bundle_cache: None,
+            prepared_state: None,
             genesis_accounts: vec![GenesisAccount::new(
                 DEFAULT_PREFUNDED_ETH_ADDRESS,
                 U256::from(DEFAULT_PREFUNDED_BALANCE_FIL) * U256::from(10_u64.pow(18)),
@@ -147,6 +149,15 @@ impl NodeConfig {
     pub fn with_actor_bundle_cache(mut self, path: Option<PathBuf>) -> Self {
         self.actor_bundle_cache = path;
         self
+    }
+
+    /// Starts from the prepared Press archive at `path` instead of an empty state tree.
+    pub fn with_prepared_state(mut self, path: Option<PathBuf>) -> Result<Self, ConfigError> {
+        if path.as_ref().is_some_and(|path| path.as_os_str().is_empty()) {
+            return Err(ConfigError::EmptyPreparedStatePath);
+        }
+        self.prepared_state = path;
+        Ok(self)
     }
 
     pub fn with_genesis_block(mut self, number: u64, timestamp: u64) -> Result<Self, ConfigError> {
@@ -194,6 +205,9 @@ impl NodeConfig {
         self.actor_bundle_cache.as_deref()
     }
 
+    pub fn prepared_state(&self) -> Option<&Path> {
+        self.prepared_state.as_deref()
+    }
     pub fn genesis_accounts(&self) -> &[GenesisAccount] {
         &self.genesis_accounts
     }
@@ -273,6 +287,18 @@ mod tests {
         assert_eq!(config.block_gas_limit(), 43);
         assert_eq!(config.base_fee_per_gas(), 44);
         assert!(!config.automine());
+    }
+
+    #[test]
+    fn prepared_state_path_is_explicit_and_nonempty() {
+        let config = NodeConfig::default()
+            .with_prepared_state(Some("prepared.press.car.zst".into()))
+            .unwrap();
+        assert_eq!(config.prepared_state(), Some(std::path::Path::new("prepared.press.car.zst")));
+        assert!(matches!(
+            NodeConfig::default().with_prepared_state(Some("".into())),
+            Err(ConfigError::EmptyPreparedStatePath)
+        ));
     }
 
     #[test]

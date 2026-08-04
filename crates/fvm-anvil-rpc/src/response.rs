@@ -7,7 +7,7 @@ use alloy_rpc_types_eth::{
     Log as RpcLog, Transaction as RpcTransaction, TransactionReceipt as RpcReceipt,
 };
 use fvm_anvil_node::{
-    Block, FilecoinGasBreakdown, Log as NodeLog, Transaction,
+    Block, FilecoinGasBreakdown, FilecoinStateRoots, Log as NodeLog, Transaction,
     TransactionReceipt as NodeTransactionReceipt,
 };
 use serde_json::{Map, Value, json};
@@ -19,6 +19,13 @@ where
     T: core::fmt::LowerHex,
 {
     format!("0x{value:x}")
+}
+
+pub fn state_roots(roots: FilecoinStateRoots) -> Value {
+    json!({
+        "prepared": roots.prepared.map(|root| root.to_string()),
+        "current": roots.current.to_string(),
+    })
 }
 
 pub fn transaction(transaction: Transaction) -> Result<Value, String> {

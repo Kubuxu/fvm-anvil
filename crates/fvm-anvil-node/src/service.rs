@@ -9,8 +9,8 @@ use crate::config::NodeConfig;
 use crate::error::NodeError;
 use crate::runtime::NodeRuntime;
 use crate::types::{
-    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, Log, LogFilter, Transaction,
-    TransactionReceipt,
+    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinStateRoots, Log, LogFilter,
+    Transaction, TransactionReceipt,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -145,6 +145,10 @@ impl NodeHandle {
         self.request(|reply| WorkerCommand::FilecoinGasBreakdown { hash, reply }).await
     }
 
+    pub async fn filecoin_state_roots(&self) -> Result<FilecoinStateRoots, NodeError> {
+        self.request(|reply| WorkerCommand::FilecoinStateRoots { reply }).await
+    }
+
     async fn request<T>(
         &self,
         command: impl FnOnce(oneshot::Sender<Result<T, NodeError>>) -> WorkerCommand,
@@ -159,11 +163,31 @@ impl NodeHandle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeStartupInfo {
     actor_bundle_root: Cid,
+    state_roots: FilecoinStateRoots,
+    initial_block_number: u64,
+    initial_timestamp: u64,
+    base_fee_per_gas: u128,
 }
 
 impl NodeStartupInfo {
     pub const fn actor_bundle_root(&self) -> Cid {
         self.actor_bundle_root
+    }
+
+    pub const fn state_roots(&self) -> FilecoinStateRoots {
+        self.state_roots
+    }
+
+    pub const fn initial_block_number(&self) -> u64 {
+        self.initial_block_number
+    }
+
+    pub const fn initial_timestamp(&self) -> u64 {
+        self.initial_timestamp
+    }
+
+    pub const fn base_fee_per_gas(&self) -> u128 {
+        self.base_fee_per_gas
     }
 }
 
@@ -286,6 +310,9 @@ enum WorkerCommand {
         hash: B256,
         reply: Reply<Option<FilecoinGasBreakdown>>,
     },
+    FilecoinStateRoots {
+        reply: Reply<FilecoinStateRoots>,
+    },
 }
 
 type Reply<T> = oneshot::Sender<Result<T, NodeError>>;
@@ -302,7 +329,13 @@ fn run_worker(
             return;
         }
     };
-    let startup_info = NodeStartupInfo { actor_bundle_root: runtime.actor_bundle_root() };
+    let startup_info = NodeStartupInfo {
+        actor_bundle_root: runtime.actor_bundle_root(),
+        state_roots: runtime.state_roots(),
+        initial_block_number: runtime.block_number(),
+        initial_timestamp: runtime.initial_timestamp(),
+        base_fee_per_gas: runtime.base_fee_per_gas(),
+    };
     if ready.send(Ok(startup_info)).is_err() {
         return;
     }
@@ -371,6 +404,9 @@ fn run_worker(
             }
             WorkerCommand::FilecoinGasBreakdown { hash, reply } => {
                 let _ = reply.send(Ok(runtime.filecoin_gas_breakdown(hash)));
+            }
+            WorkerCommand::FilecoinStateRoots { reply } => {
+                let _ = reply.send(Ok(runtime.state_roots()));
             }
         }
     }

@@ -17,7 +17,10 @@ use fvm_anvil_eth::{
     decode_execution_return, decode_revert_data, decode_signed, delegated_chain_length,
     project_event,
 };
-use fvm_ipld_blockstore::{Blockstore, MemoryBlockstore};
+use fvm_anvil_state::{
+    ForestCar, prepared::PreparedStateMetadata, verify::verify_prepared_archive,
+};
+use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding::CborStore;
 use fvm_ipld_encoding::tuple::{Deserialize_tuple, serde_tuple};
 use fvm_ipld_kamt::{AsHashedKey, Config as KamtConfig, HashedKey, Kamt};
@@ -32,13 +35,14 @@ use crate::bundle::{BundleArtifacts, load_bundle};
 use crate::config::NodeConfig;
 use crate::error::NodeError;
 use crate::externs::DeterministicExterns;
-use crate::genesis::{PrefundedAccount, create_genesis};
+use crate::genesis::{GenesisOutput, PrefundedAccount, create_genesis, fund_development_accounts};
+use crate::storage::RuntimeBlockstore;
 use crate::types::{
-    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, Log, LogFilter, Transaction,
-    TransactionReceipt,
+    Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinStateRoots, Log, LogFilter,
+    Transaction, TransactionReceipt,
 };
 
-type RuntimeMachine = DefaultMachine<Rc<MemoryBlockstore>, DeterministicExterns>;
+type RuntimeMachine = DefaultMachine<Rc<RuntimeBlockstore>, DeterministicExterns>;
 type RuntimeKernel = DefaultFilecoinKernel<DefaultCallManager<RuntimeMachine>>;
 type RuntimeExecutor = DefaultExecutor<RuntimeKernel>;
 
@@ -230,11 +234,27 @@ struct TombstoneV18 {
     nonce: u64,
 }
 
+struct PreparedInput {
+    archive: ForestCar,
+    metadata: PreparedStateMetadata,
+}
+
+struct InitialState {
+    prepared_root: Option<Cid>,
+    current_root: Cid,
+    block_number: u64,
+    epoch: i64,
+    timestamp: u64,
+    base_fee_per_gas: u128,
+    accounts: Vec<PrefundedAccount>,
+}
+
 pub(crate) struct NodeRuntime {
-    store: Rc<MemoryBlockstore>,
+    store: Rc<RuntimeBlockstore>,
     engine_pool: EnginePool,
     network: NetworkConfig,
     current_root: Cid,
+    prepared_root: Option<Cid>,
     bundle: BundleArtifacts,
     prefunded_accounts: Vec<PrefundedAccount>,
     genesis_block_number: u64,
@@ -256,24 +276,52 @@ pub(crate) struct NodeRuntime {
 
 impl NodeRuntime {
     pub(crate) fn new(config: NodeConfig) -> Result<Self, NodeError> {
-        let store = Rc::new(MemoryBlockstore::default());
+        let prepared = config.prepared_state().map(load_prepared_state).transpose()?;
+        let (base, prepared_metadata) = match prepared {
+            Some(input) => (Some(input.archive), Some(input.metadata)),
+            None => (None, None),
+        };
+        let store = Rc::new(match base {
+            Some(base) => RuntimeBlockstore::over(base),
+            None => RuntimeBlockstore::empty(),
+        });
         let bundle_started = Instant::now();
         let bundle =
             load_bundle(config.actor_bundle(), config.actor_bundle_cache(), store.as_ref())?;
         tracing::debug!(elapsed = ?bundle_started.elapsed(), "loaded actor bundle");
-        let genesis_started = Instant::now();
-        let genesis = create_genesis(&store, &bundle, config.genesis_accounts())?;
-        tracing::debug!(elapsed = ?genesis_started.elapsed(), "created genesis state");
-        let genesis_number = config.genesis_block_number();
-        let genesis_timestamp = config.genesis_timestamp();
-        let genesis_epoch = i64::try_from(genesis_number)
-            .map_err(|_| NodeError::Runtime("genesis block exceeds the FVM epoch range".into()))?;
-        let next_epoch = genesis_epoch
+
+        let state_started = Instant::now();
+        let initial = match prepared_metadata {
+            Some(metadata) => initialize_prepared_state(&config, &store, &bundle, metadata)?,
+            None => {
+                let genesis = create_genesis(&store, &bundle, config.genesis_accounts())?;
+                let epoch = i64::try_from(config.genesis_block_number()).map_err(|_| {
+                    NodeError::Runtime("genesis block exceeds the FVM epoch range".into())
+                })?;
+                InitialState {
+                    prepared_root: None,
+                    current_root: genesis.root,
+                    block_number: config.genesis_block_number(),
+                    epoch,
+                    timestamp: config.genesis_timestamp(),
+                    base_fee_per_gas: config.base_fee_per_gas(),
+                    accounts: genesis.accounts,
+                }
+            }
+        };
+        tracing::debug!(
+            imported = initial.prepared_root.is_some(),
+            elapsed = ?state_started.elapsed(),
+            "initialized startup state"
+        );
+        let next_epoch = initial
+            .epoch
             .checked_add(1)
-            .ok_or_else(|| NodeError::Runtime("genesis FVM epoch has no successor".into()))?;
-        let next_timestamp = genesis_timestamp
+            .ok_or_else(|| NodeError::Runtime("initial FVM epoch has no successor".into()))?;
+        let next_timestamp = initial
+            .timestamp
             .checked_add(BLOCK_TIME_SECONDS)
-            .ok_or_else(|| NodeError::Runtime("genesis timestamp has no successor".into()))?;
+            .ok_or_else(|| NodeError::Runtime("initial timestamp has no successor".into()))?;
 
         let mut network = NetworkConfig::new(config.network_version());
         network.chain_id(ChainID::from(config.chain_id())).override_actors(bundle.root);
@@ -298,40 +346,41 @@ impl NodeRuntime {
         }
         drop(engine);
 
-        let genesis_hash = synthetic_genesis_hash(
+        let initial_hash = synthetic_genesis_hash(
             config.chain_id(),
-            genesis_number,
-            genesis_timestamp,
+            initial.block_number,
+            initial.timestamp,
             config.block_gas_limit(),
-            config.base_fee_per_gas(),
-            &genesis.root,
+            initial.base_fee_per_gas,
+            &initial.current_root,
         );
-        let genesis_block = Block {
-            hash: genesis_hash,
+        let initial_block = Block {
+            hash: initial_hash,
             parent_hash: B256::ZERO,
-            number: genesis_number,
-            state_root: ethereum_state_root(&genesis.root),
-            timestamp: genesis_timestamp,
+            number: initial.block_number,
+            state_root: ethereum_state_root(&initial.current_root),
+            timestamp: initial.timestamp,
             gas_limit: config.block_gas_limit(),
             gas_used: 0,
-            base_fee_per_gas: config.base_fee_per_gas(),
+            base_fee_per_gas: initial.base_fee_per_gas,
             transactions: Vec::new(),
             logs: Vec::new(),
         };
         let mut block_numbers_by_hash = HashMap::new();
-        block_numbers_by_hash.insert(genesis_hash, genesis_number);
+        block_numbers_by_hash.insert(initial_hash, initial.block_number);
 
         let runtime = Self {
             store,
             engine_pool,
             network,
-            current_root: genesis.root,
+            current_root: initial.current_root,
+            prepared_root: initial.prepared_root,
             bundle,
-            prefunded_accounts: genesis.accounts,
-            genesis_block_number: genesis_number,
+            prefunded_accounts: initial.accounts,
+            genesis_block_number: initial.block_number,
             block_gas_limit: config.block_gas_limit(),
-            base_fee_per_gas: config.base_fee_per_gas(),
-            blocks: vec![CanonicalBlock { block: genesis_block, root: genesis.root }],
+            base_fee_per_gas: initial.base_fee_per_gas,
+            blocks: vec![CanonicalBlock { block: initial_block, root: initial.current_root }],
             block_numbers_by_hash,
             transactions: HashMap::new(),
             receipts: HashMap::new(),
@@ -344,7 +393,7 @@ impl NodeRuntime {
             snapshots: HashMap::new(),
             next_snapshot_id: 1,
         };
-        drop(runtime.new_executor_at(runtime.current_root, genesis_epoch, genesis_timestamp)?);
+        drop(runtime.new_executor_at(initial.current_root, initial.epoch, initial.timestamp)?);
         Ok(runtime)
     }
 
@@ -356,8 +405,20 @@ impl NodeRuntime {
         self.bundle.root
     }
 
+    pub(crate) fn state_roots(&self) -> FilecoinStateRoots {
+        FilecoinStateRoots { prepared: self.prepared_root, current: self.current_root }
+    }
+
     pub(crate) fn accounts(&self) -> Vec<EthAddress> {
         self.prefunded_accounts.iter().map(|account| account.ethereum).collect()
+    }
+
+    pub(crate) fn initial_timestamp(&self) -> u64 {
+        self.blocks[0].block.timestamp
+    }
+
+    pub(crate) fn base_fee_per_gas(&self) -> u128 {
+        self.base_fee_per_gas
     }
 
     pub(crate) fn submit_raw_transaction(&mut self, raw: Bytes) -> Result<B256, NodeError> {
@@ -1107,6 +1168,77 @@ impl NodeRuntime {
             .map_err(|error| NodeError::Runtime(error.to_string()))?;
         DefaultExecutor::new(self.engine_pool.clone(), machine)
             .map_err(|error| NodeError::Runtime(error.to_string()))
+    }
+}
+
+fn load_prepared_state(path: &std::path::Path) -> Result<PreparedInput, NodeError> {
+    let archive = ForestCar::open(path).map_err(|error| NodeError::PreparedState {
+        path: path.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    let (metadata, _) = verify_prepared_archive(&archive, archive.roots()).map_err(|error| {
+        NodeError::PreparedState { path: path.to_path_buf(), detail: error.to_string() }
+    })?;
+    Ok(PreparedInput { archive, metadata })
+}
+
+fn initialize_prepared_state(
+    config: &NodeConfig,
+    store: &Rc<RuntimeBlockstore>,
+    bundle: &BundleArtifacts,
+    metadata: PreparedStateMetadata,
+) -> Result<InitialState, NodeError> {
+    let expected_network: u32 = config.network_version().into();
+    if metadata.network_version != expected_network {
+        return Err(prepared_configuration_error(
+            config,
+            format!(
+                "archive network version {} does not match node network version {expected_network}",
+                metadata.network_version
+            ),
+        ));
+    }
+    if metadata.actor_manifest_data != bundle.manifest_data {
+        return Err(prepared_configuration_error(
+            config,
+            format!(
+                "archive actor manifest data {} does not match configured bundle manifest {}",
+                metadata.actor_manifest_data, bundle.manifest_data
+            ),
+        ));
+    }
+    let block_number = u64::try_from(metadata.epoch).map_err(|_| {
+        prepared_configuration_error(
+            config,
+            format!("archive epoch {} cannot be represented as a block number", metadata.epoch),
+        )
+    })?;
+    let base_fee = token_amount_to_u256(&metadata.base_fee)
+        .map_err(|error| prepared_configuration_error(config, error.to_string()))?;
+    let base_fee_per_gas = u128::try_from(base_fee)
+        .map_err(|_| prepared_configuration_error(config, "archive base fee exceeds 128 bits"))?;
+    let prepared_root = metadata.state_root;
+    let GenesisOutput { root: current_root, accounts } =
+        fund_development_accounts(store, &prepared_root, bundle, config.genesis_accounts())
+            .map_err(|error| prepared_configuration_error(config, error.to_string()))?;
+    Ok(InitialState {
+        prepared_root: Some(prepared_root),
+        current_root,
+        block_number,
+        epoch: metadata.epoch,
+        timestamp: metadata.timestamp,
+        base_fee_per_gas,
+        accounts,
+    })
+}
+
+fn prepared_configuration_error(config: &NodeConfig, detail: impl Into<String>) -> NodeError {
+    NodeError::PreparedState {
+        path: config
+            .prepared_state()
+            .expect("prepared configuration errors require a prepared-state path")
+            .to_path_buf(),
+        detail: detail.into(),
     }
 }
 

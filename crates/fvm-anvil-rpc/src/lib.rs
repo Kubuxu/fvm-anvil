@@ -284,6 +284,12 @@ impl RpcService {
                     Err(error) => node_error(error),
                 }
             }
+            RpcRequest::FilecoinGetStateRoots { .. } => {
+                match self.node.filecoin_state_roots().await {
+                    Ok(roots) => ResponseResult::success(response::state_roots(roots)),
+                    Err(error) => node_error(error),
+                }
+            }
             RpcRequest::Web3ClientVersion { .. }
             | RpcRequest::EthSyncing { .. }
             | RpcRequest::EthMaxPriorityFeePerGas { .. } => {
@@ -359,6 +365,7 @@ fn is_known_method(method: &str) -> bool {
             | "anvil_setAutomine"
             | "evm_setAutomine"
             | "filecoin_getGasBreakdown"
+            | "filecoin_getStateRoots"
     )
 }
 
@@ -393,7 +400,8 @@ fn static_response(request: &RpcRequest) -> Option<Value> {
         | RpcRequest::AnvilMine { .. }
         | RpcRequest::EvmMine { .. }
         | RpcRequest::SetAutomine { .. }
-        | RpcRequest::FilecoinGetGasBreakdown { .. } => None,
+        | RpcRequest::FilecoinGetGasBreakdown { .. }
+        | RpcRequest::FilecoinGetStateRoots { .. } => None,
     }
 }
 
@@ -498,6 +506,7 @@ mod tests {
             ("anvil_setAutomine", json!([false])),
             ("evm_setAutomine", json!([true])),
             ("filecoin_getGasBreakdown", json!([hash])),
+            ("filecoin_getStateRoots", json!([])),
         ];
 
         for (method, params) in cases {
@@ -709,6 +718,22 @@ mod tests {
         assert_eq!(response::anvil_mine(), Value::Null);
         assert_eq!(response::evm_mine(), json!("0x0"));
         assert_eq!(response::optional_block(None, false).unwrap(), Value::Null);
+    }
+    #[test]
+    fn filecoin_state_roots_have_stable_string_fields() {
+        let prepared =
+            "bafy2bzaceb2mmtnzkpwzc4ncavi7sc4y5eoh43s6epr4skl3swzctghkeqnek".parse().unwrap();
+        let current = prepared;
+        assert_eq!(
+            response::state_roots(fvm_anvil_node::FilecoinStateRoots {
+                prepared: Some(prepared),
+                current,
+            }),
+            json!({
+                "prepared": prepared.to_string(),
+                "current": current.to_string(),
+            })
+        );
     }
 
     #[test]

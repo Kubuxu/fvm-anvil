@@ -5,7 +5,7 @@ use std::path::Path;
 
 use cid::Cid;
 use fvm::machine::Manifest;
-use fvm_ipld_blockstore::{Blockstore, MemoryBlockstore};
+use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_car::load_car;
 use fvm_ipld_encoding::CborStore;
 
@@ -27,10 +27,10 @@ impl BundleArtifacts {
     }
 }
 
-pub(crate) fn load_bundle(
+pub(crate) fn load_bundle<BS: Blockstore>(
     selection: &ActorBundle,
     cache_path: Option<&Path>,
-    store: &MemoryBlockstore,
+    store: &BS,
 ) -> Result<BundleArtifacts, NodeError> {
     let expected_root = selection.expected_root()?;
     match selection {
@@ -85,8 +85,8 @@ pub(crate) fn load_bundle(
     }
 }
 
-fn load_and_validate(
-    store: &MemoryBlockstore,
+fn load_and_validate<BS: Blockstore>(
+    store: &BS,
     reader: impl Read,
     expected_root: Option<Cid>,
 ) -> Result<BundleArtifacts, BundleError> {

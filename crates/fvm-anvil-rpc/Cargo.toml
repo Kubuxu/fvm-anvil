@@ -24,3 +24,6 @@ anvil-server = { workspace = true, default-features = false }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+cid.workspace = true

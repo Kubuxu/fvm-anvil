@@ -3,12 +3,14 @@
 Status: active  
 Last updated: 2026-08-04
 
-Current implementation: storage, standalone actor extraction, and contract patches are complete.
-`press build` resolves recipe addresses, preserves actor IDs and source Init aliases, rebuilds a V5
-state tree, applies v18 EVM runtime-code and storage changes, writes indexed ForestCAR, and reopens
-the result for structural verification. The workflow has patched mainnet WFIL at epoch 6,251,280,
-including code, storage, balance, and sequence changes, into an independently readable 796,291-byte
-archive containing 455 blocks. Importing the prepared state into `fvm-anvil` remains the next stage.
+Current implementation: storage, standalone actor extraction, contract patches, and node import are
+complete. `press build` resolves recipe addresses, preserves actor IDs and source Init aliases,
+rebuilds a V5 state tree, applies v18 EVM runtime-code and storage changes, writes indexed
+ForestCAR, and reopens the result for structural verification. `fvm-anvil --state
+<PRESS_ARCHIVE>` mounts that output as a read-only base, validates its NV28/v18 execution context,
+and funds development callers in a writable overlay. The workflow imported patched mainnet WFIL at
+epoch 6,251,280, executed a transaction, returned its receipt and FVM gas breakdown, and retained
+separate prepared and current roots.
 
 ## Purpose
 
@@ -224,9 +226,9 @@ build gate.
 - maintaining the writable execution overlay;
 - mining, snapshots, reverts, RPC indexes, and gas diagnostics.
 
-The root stored by `press` is the prepared imported root. The node may immediately derive a new root
-when it adds development accounts. Filecoin observability should distinguish the prepared root from
-the current execution root.
+The root stored by `press` is the prepared imported root. The node immediately derives a writable
+current root when it adds development accounts. `filecoin_getStateRoots` reports both roots, and the
+current root advances after adopted transactions while the prepared root remains fixed.
 
 ## Code ownership
 
@@ -287,7 +289,7 @@ addresses resolve to their original actor IDs, and unrelated actors are absent.
 Gate: a prepared contract exposes the replacement bytecode and patched storage while an unpatched
 copy exposes the original values.
 
-### Stage 4: node import
+### Stage 4: node import — delivered
 
 1. Add prepared-state input to genesis-time node configuration.
 2. Mount the prepared ForestCAR as a read-only base blockstore.
@@ -296,9 +298,12 @@ copy exposes the original values.
 5. Expose prepared and current state roots separately.
 6. Exercise the real endpoint against an imported and patched contract.
 
-Gate: the actual binary starts from a prepared archive, funds its development caller, executes a
-transaction against copied mainnet contract state, and returns the result, receipt, and FVM gas
-breakdown.
+Gate: the release binary started from the 796,291-byte patched WFIL archive, funded its development
+caller, exposed the patched bytecode and storage through Ethereum RPC, returned `0x` from the
+replacement runtime, adopted transaction `0x0fea736b4182e49c8e6375ebbf27658af575208b966cb30fa7d2acdda9c9f416`,
+and returned its successful receipt and Filecoin gas breakdown. The prepared root remained
+`bafy2bzaceb2mmtnzkpwzc4ncavi7sc4y5eoh43s6epr4skl3swzctghkeqnek` while the writable current root
+advanced.
 
 ### Stage 5: persistence and broader preparation
 

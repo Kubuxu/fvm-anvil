@@ -1,7 +1,7 @@
 # fvm-anvil design decisions and findings
 
 Status: living design record  
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 The active execution sequence and delegation gates are maintained in
 [`docs/implementation-plan.md`](implementation-plan.md).
@@ -32,9 +32,9 @@ Explicitly out of scope:
 - Full Filecoin consensus, mining, cron, null rounds, actor migrations, proofs, or tipset competition.
 - General native actor behavior beyond the actors mechanically required by FVM execution.
 
-General remote chain forking remains parked. Offline preparation of selected mainnet actor state for
-local execution is planned separately in [`docs/press.md`](press.md); it does not import consensus
-history or define remote RPC forking behavior.
+General remote chain forking remains parked. Offline preparation and import of selected mainnet
+actor state are implemented through [`press` and the prepared-state boundary](press.md); this does
+not import consensus history or define remote RPC forking behavior.
 
 ## Versions and default environment
 
@@ -57,8 +57,14 @@ Defaults:
 - Synthetic genesis block number and timestamp zero.
 - Filecoin block gas limit 10,000,000,000 and initial base fee 100 attoFIL per gas.
 
+`--state <PRESS_ARCHIVE>` replaces the empty genesis state and its number, timestamp, and base fee
+with the prepared archive's recorded execution context. The local chain ID and block gas limit
+remain node configuration. Generated development accounts are funded in a writable overlay without
+mutating the prepared archive.
+
 Chain ID, generated accounts, balances, mnemonic and derivation path, additional funded accounts,
-genesis block context, block gas limit, and base fee are immutable genesis-time CLI configuration.
+block gas limit, and the selected empty or prepared initial state are immutable genesis-time
+configuration. Explicit `--number`, `--timestamp`, and `--base-fee` values conflict with `--state`.
 
 An alternate `--actor-bundle <path>` is a genesis-time choice. Startup trusts the CAR's declared
 root, then loads its manifest and verifies the actor entries required for execution. The user is
@@ -227,12 +233,11 @@ FEVM contract context also follows Filecoin behavior:
 Standard receipts cannot expose the full model. Separate Filecoin endpoints should expose `ApplyRet` fields and `ExecutionEvent::GasCharge` entries, including compute gas, other gas, burns, refund, tip, penalty, failure information, and optional elapsed time. Candidate methods include:
 
 - `filecoin_getGasBreakdown`
-- `filecoin_getGasTrace`
-- `filecoin_getMessageCid`
-- `filecoin_getStateRoot`
-- `filecoin_getActor`
+- `filecoin_getStateRoots`
 
-The exact names remain to be fixed in the RPC schema.
+Gas traces and message CID inspection remain candidate additions.
+
+The two implemented method names above are fixed RPC contracts.
 
 Opcode-level Geth/Foundry traces are unavailable because the builtin EVM interpreter does not currently expose opcode tracing. FVM execution and gas-charge traces remain available.
 
@@ -265,8 +270,9 @@ Match Anvil's four modes:
 Startup diagnostics, the account banner, and private development keys are written to stderr so RPC
 process stdout remains clean. `--quiet` and its `--silent` alias suppress those diagnostics.
 `--config-out <file>` writes Anvil-compatible wallet and fee fields plus a `filecoin` object
-containing the network version, actor bundle version and root, and startup mining mode. On Unix the
-file is created or reset to mode `0600` because it contains private keys.
+containing the network version, actor bundle version and root, prepared and current state roots, and
+startup mining mode. On Unix the file is created or reset to mode `0600` because it contains private
+keys.
 
 Interval scheduling stops after any `anvil_setAutomine` or `evm_setAutomine` call; the runtime RPC
 transition then owns mining behavior. Mining mode and scheduler state are process controls and are
