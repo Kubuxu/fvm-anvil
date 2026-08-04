@@ -773,14 +773,14 @@ impl NodeRuntime {
 
         let first_timestamp = schedule.first_timestamp;
 
-        let pending: Vec<_> = self.pool.iter().cloned().collect();
-        let mut applications = Vec::with_capacity(pending.len());
-        let root = if pending.is_empty() {
+        let pending_len = self.pool.len();
+        let mut applications = Vec::with_capacity(pending_len);
+        let root = if self.pool.is_empty() {
             self.current_root
         } else {
             let mut executor =
                 self.new_executor_at(self.current_root, self.next_epoch, first_timestamp)?;
-            for transaction in &pending {
+            for transaction in &self.pool {
                 let apply = executor
                     .execute_message(
                         transaction.bridged.signed_message().message().clone(),
@@ -797,17 +797,18 @@ impl NodeRuntime {
 
         let parent_hash = self.blocks.last().map_or(B256::ZERO, |record| record.block.hash);
         let transaction_hashes: Vec<_> =
-            pending.iter().map(|transaction| transaction.transaction.hash).collect();
+            self.pool.iter().map(|transaction| transaction.transaction.hash).collect();
         let block_hash =
             synthetic_block_hash(parent_hash, number, first_timestamp, &root, &transaction_hashes);
 
-        let mut transactions = Vec::with_capacity(pending.len());
-        let mut receipts = Vec::with_capacity(pending.len());
-        let mut gas_breakdowns = Vec::with_capacity(pending.len());
+        let mut transactions = Vec::with_capacity(pending_len);
+        let mut receipts = Vec::with_capacity(pending_len);
+        let mut gas_breakdowns = Vec::with_capacity(pending_len);
         let mut block_logs = Vec::new();
         let mut cumulative_gas_used = 0_u64;
         let mut next_log_index = 0_u64;
-        for (index, (pending, apply)) in pending.iter().zip(applications.iter()).enumerate() {
+        let mut emitter_addresses = HashMap::new();
+        for (index, (pending, apply)) in self.pool.iter().zip(&applications).enumerate() {
             let index = u64::try_from(index)
                 .map_err(|_| NodeError::MineArithmeticOverflow { field: "transaction index" })?;
             let mut transaction = pending.transaction.clone();
@@ -828,7 +829,14 @@ impl NodeRuntime {
             };
             let mut logs = Vec::new();
             for event in &apply.events {
-                let Some(emitter) = self.emitter_address(root, event.emitter)? else {
+                let emitter = if let Some(address) = emitter_addresses.get(&event.emitter) {
+                    *address
+                } else {
+                    let address = self.emitter_address(root, event.emitter)?;
+                    emitter_addresses.insert(event.emitter, address);
+                    address
+                };
+                let Some(emitter) = emitter else {
                     continue;
                 };
                 let projected = project_event(emitter, &event.event)?;
@@ -924,7 +932,7 @@ impl NodeRuntime {
             self.receipts.insert(hash, receipt);
             self.gas_breakdowns.insert(hash, gas);
         }
-        for _ in 0..pending.len() {
+        for _ in 0..pending_len {
             self.pool.pop_front();
         }
         let blocks = records.iter().map(|record| record.block.clone()).collect();

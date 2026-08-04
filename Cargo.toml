@@ -16,12 +16,17 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kubuxu/fvm-anvil"
 publish = false
 
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = "none"
+
 [workspace.dependencies]
 fvm-anvil-eth = { path = "crates/fvm-anvil-eth" }
 fvm-anvil-node = { path = "crates/fvm-anvil-node" }
 fvm-anvil-rpc = { path = "crates/fvm-anvil-rpc" }
 
-alloy-consensus = { version = "=2.2.0", default-features = false, features = ["k256", "serde", "std"] }
+alloy-consensus = { version = "=2.2.0", default-features = false, features = ["secp256k1", "serde", "std"] }
 alloy-eips = { version = "=2.2.0", default-features = false, features = ["serde", "std"] }
 alloy-network = { version = "=2.2.0", default-features = false }
 alloy-primitives = { version = "=1.6.1", features = ["getrandom", "k256", "rand", "serde"] }
