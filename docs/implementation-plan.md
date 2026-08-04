@@ -1,16 +1,16 @@
 # fvm-anvil implementation plan
 
 Status: active  
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 This document is the current execution plan for the architecture recorded in `docs/design.md`.
 It defines component ownership, dependency direction, implementation waves, delegation boundaries,
 and the evidence required before each wave is complete. Design rationale and compatibility findings
 remain in `docs/design.md`.
 
-Offline mainnet-state preparation and its proposed `press` tool are tracked in
-[`docs/press.md`](press.md). Those stages extend this plan only after the current four-crate runtime
-has a concrete shared state-format boundary.
+Offline mainnet-state preparation and the active `press` tool are tracked in
+[`docs/press.md`](press.md). The shared `fvm-anvil-state` crate owns its prepared-state format and
+ForestCAR storage; node import remains the next integration boundary.
 
 ## Current status
 

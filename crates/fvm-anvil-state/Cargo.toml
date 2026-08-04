@@ -10,12 +10,14 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+alloy-primitives.workspace = true
 cid.workspace = true
 fvm.workspace = true
 fvm_ipld_blockstore.workspace = true
 fvm_ipld_car.workspace = true
 fvm_ipld_encoding.workspace = true
 fvm_ipld_hamt.workspace = true
+fvm_ipld_kamt.workspace = true
 fvm_shared.workspace = true
 hex.workspace = true
 multihash-codetable.workspace = true

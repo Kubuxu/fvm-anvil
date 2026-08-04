@@ -106,9 +106,9 @@ fn build(
     let context = inspect_filecoin_snapshot(&source, source.roots())
         .with_context(|| format!("failed to inspect source snapshot {}", snapshot.display()))?;
     let recipe = Recipe::load(recipe_path)?;
-    let selectors = recipe.selectors()?;
+    let patches = recipe.patches()?;
     let summary =
-        build_prepared_archive(&source, &context, &selectors, network_version, output, force)
+        build_prepared_archive(&source, &context, &patches, network_version, output, force)
             .with_context(|| format!("failed to build prepared archive {}", output.display()))?;
     let result = format_build_summary(output, &summary);
     std::io::stdout().lock().write_all(result.as_bytes()).context("failed to write build result")
@@ -195,12 +195,57 @@ fn format_prepared_metadata(root: &impl Display, metadata: &PreparedStateMetadat
         } else {
             format!(" ({})", actor.requested_addresses.join(", "))
         };
+        let delegated_address =
+            actor.delegated_address.map_or_else(|| "-".into(), |address| address.to_string());
         writeln!(
             output,
-            "  f0{}{} code={} state={} source_state={}",
-            actor.id, requested, actor.code, actor.state, actor.source_state
+            "  f0{}{} code={} state={} source_state={} sequence={} balance_atto={} delegated_address={}",
+            actor.id,
+            requested,
+            actor.code,
+            actor.state,
+            actor.source_state,
+            actor.sequence,
+            actor.balance.atto(),
+            delegated_address,
         )
         .expect("writing to a String cannot fail");
+        if let Some(patch) = &actor.patch {
+            if let Some(code) = &patch.runtime_code {
+                writeln!(
+                    output,
+                    "    runtime_code: {} (0x{}) -> {} (0x{})",
+                    code.source,
+                    hex::encode(&code.source_hash),
+                    code.replacement,
+                    hex::encode(&code.replacement_hash),
+                )
+                .expect("writing to a String cannot fail");
+            }
+            for storage in &patch.storage {
+                writeln!(
+                    output,
+                    "    storage 0x{}: 0x{} -> 0x{}",
+                    hex::encode(&storage.key),
+                    hex::encode(&storage.source),
+                    hex::encode(&storage.replacement),
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if let Some(balance) = &patch.balance {
+                writeln!(
+                    output,
+                    "    balance_atto: {} -> {}",
+                    balance.source.atto(),
+                    balance.replacement.atto(),
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if let Some(sequence) = patch.sequence {
+                writeln!(output, "    sequence: {} -> {}", sequence.source, sequence.replacement,)
+                    .expect("writing to a String cannot fail");
+            }
+        }
     }
     output
 }

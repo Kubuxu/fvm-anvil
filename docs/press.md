@@ -3,12 +3,12 @@
 Status: active  
 Last updated: 2026-08-04
 
-Current implementation: storage and standalone actor extraction are complete. `press build` resolves
-recipe addresses, preserves actor IDs and all their source Init aliases, rebuilds a V5 state tree,
-copies complete actor state DAGs and available code blocks, writes indexed ForestCAR, and reopens the
-result for structural verification. The workflow has extracted mainnet WFIL at epoch 6,251,280 into
-an independently readable 798,060-byte archive containing 454 blocks. Contract state patches remain
-the next stage.
+Current implementation: storage, standalone actor extraction, and contract patches are complete.
+`press build` resolves recipe addresses, preserves actor IDs and source Init aliases, rebuilds a V5
+state tree, applies v18 EVM runtime-code and storage changes, writes indexed ForestCAR, and reopens
+the result for structural verification. The workflow has patched mainnet WFIL at epoch 6,251,280,
+including code, storage, balance, and sequence changes, into an independently readable 796,291-byte
+archive containing 455 blocks. Importing the prepared state into `fvm-anvil` remains the next stage.
 
 ## Purpose
 
@@ -67,18 +67,13 @@ A prepared output uses a distinct `.press.car.zst` suffix to prevent it from bei
 consensus chain snapshot. Its CAR root is a versioned metadata block rather than a Filecoin tipset:
 
 ```text
-PressStateMetadataV1
-    state_root
-    source_head_tipset
-    source_parent_state_root
-    epoch
-    timestamp
-    base_fee
-    network_version
-    actor_manifest
-    included_actor_ids
-    applied_patches
-    recipe_digest
+PressStateMetadataV2
+    prepared state root and source execution context
+    network version and actor manifest data
+    external actor code dependencies
+    included actor records and source state CIDs
+    requested addresses
+    applied code, storage, balance, and sequence patches
 ```
 
 The container is ForestCAR-compatible for indexed block access, but the output is intended as an FVM
@@ -94,25 +89,37 @@ press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
 press inspect OUTPUT
 ```
 
-The current extraction recipe identifies actors by stable user-facing addresses:
+Recipe version 1 selects actors by stable user-facing addresses and optionally applies explicit
+transformations:
 
 ```json
 {
   "version": 1,
   "actors": [
-    { "address": "0xTarget" },
+    {
+      "address": "0xTarget",
+      "code": { "replace": "0x60006000f3" },
+      "storage": {
+        "0x0000000000000000000000000000000000000000000000000000000000000001":
+          "0x0000000000000000000000000000000000000000000000000000000000000002"
+      },
+      "balance": "1000000000000000000",
+      "sequence": 7
+    },
     { "address": "0xDependency" }
   ]
 }
 ```
 
-Stage 3 extends the same actor entries with explicit `code`, `storage`, `balance`, and `sequence`
-patches. The Stage 2 binary rejects those fields rather than silently ignoring an unimplemented
-transformation.
+Code is hex-encoded deployed/runtime bytecode. Storage keys and values are exactly 32-byte hex
+words; a zero value deletes the slot. Balance is a non-negative decimal attoFIL integer and sequence
+is a JSON `u64`. Explicit `null` fields are rejected. Multiple entries resolving to the same actor
+are rejected rather than merged.
 
-Addresses are required by default. A build fails clearly if a requested address does not exist. The
-output metadata records resolved actor IDs, requested addresses, source state CIDs, prepared state
-CIDs, code CIDs, the source execution context, and manifest data for inspection and provenance.
+Addresses are required. A build fails clearly if a requested address does not exist or an
+EVM-specific patch targets a non-v18-EVM actor. Output metadata records final actor records, source
+and prepared state CIDs, source and replacement code details, storage changes, requested addresses,
+the source execution context, and manifest data.
 
 ## Building the custom state tree
 
@@ -166,16 +173,21 @@ copy of that actor remains large.
 
 ## State modifications
 
-The initial patch surface supports existing EVM actors:
+The patch surface supports existing builtin-actors v18 EVM actors:
 
 - replace deployed/runtime bytecode;
 - set or delete storage slots;
-- optionally set the existing actor balance or Filecoin sequence.
+- set the existing actor balance or Filecoin sequence.
 
-Bytecode replacement writes a new raw bytecode block and Keccak-256 bytecode hash while preserving
-the contract storage root and EVM nonce. Storage patches load the actor's KAMT, delete zero values,
-set nonzero values, flush once, and update the EVM actor state. All requested actor changes are
-committed into the new outer state root before export.
+Bytecode replacement enforces the actor's 24 KiB limit and reserved `0xef` prefix rule, writes a raw
+IPLD bytecode block, and records its Keccak-256 hash while preserving the contract storage root, EVM
+nonce, transient data, and tombstone. Storage patches use the v18 minimal-big-endian word encoding
+and KAMT configuration, delete zero values, apply all requested slots, and flush once. Actor balance
+and sequence changes update the outer `ActorState`.
+
+Structural verification reloads the completed archive, checks final actor records, recomputes
+replacement bytecode hashes, and reads every patched storage slot back from the emitted KAMT. All
+changes are committed into the new outer state root before publication.
 
 The initial implementation does not synthesize a new EVM contract at an address that is absent from
 the source. That requires separate EAM and actor-invariant work and is not needed for replacing code
@@ -264,7 +276,7 @@ reads chosen actors through indexed block access without ingesting the source ar
 Gate: the prepared archive opens without the source snapshot, its state tree loads, included
 addresses resolve to their original actor IDs, and unrelated actors are absent.
 
-### Stage 3: contract patches — planned
+### Stage 3: contract patches — delivered
 
 1. Add the versioned v18 EVM state adapter needed for serialization and mutation.
 2. Replace existing contract runtime bytecode while preserving storage and EVM nonce.

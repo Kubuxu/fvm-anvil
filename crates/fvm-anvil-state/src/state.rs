@@ -13,11 +13,15 @@ use fvm_ipld_blockstore::{Blockstore, MemoryBlockstore};
 use fvm_ipld_encoding::{CborStore, tuple::*};
 use fvm_ipld_hamt::{BytesKey, Config, Hamt};
 use fvm_shared::address::{Address, Payload};
+use fvm_shared::econ::TokenAmount;
 use fvm_shared::state::{ActorState, StateTreeVersion};
 use multihash_codetable::Code;
 use thiserror::Error;
 
-use crate::prepared::PreparedActor;
+use crate::evm::apply_evm_patch;
+use crate::prepared::{
+    PreparedActor, PreparedActorPatch, PreparedBalancePatch, PreparedSequencePatch,
+};
 
 const SYSTEM_ACTOR_ID: u64 = 0;
 const INIT_ACTOR_ID: u64 = 1;
@@ -50,6 +54,16 @@ pub struct ActorSelector {
     pub address: Address,
 }
 
+/// One selected actor and the deterministic transformations to apply to it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActorPatch {
+    pub selector: ActorSelector,
+    pub runtime_code: Option<Vec<u8>>,
+    pub storage: BTreeMap<[u8; 32], [u8; 32]>,
+    pub balance: Option<TokenAmount>,
+    pub sequence: Option<u64>,
+}
+
 /// Fresh state-tree blocks plus provenance needed to export them.
 pub struct ConstructedState {
     pub state_root: Cid,
@@ -72,12 +86,16 @@ pub enum StateConstructionError {
     MissingActor(u64),
     #[error("actor f098 is test-only and cannot be included in reachable state")]
     TestActor,
+    #[error("multiple recipe entries resolve to actor f0{0}")]
+    DuplicateActorPatch(u64),
     #[error("failed to load or construct the state tree: {0}")]
     StateTree(String),
     #[error("failed to read actor f0{id} state {state}: {message}")]
     ActorState { id: u64, state: Box<Cid>, message: String },
     #[error("failed to inspect actor code block {code}: {message}")]
     ActorCode { code: Box<Cid>, message: String },
+    #[error("failed to patch actor f0{id}: {message}")]
+    Patch { id: u64, message: String },
     #[error("failed to rebuild the Init actor address map: {0}")]
     InitMap(String),
 }
@@ -118,20 +136,24 @@ pub fn parse_actor_selector(
 pub fn construct_standalone_state<BS: Blockstore>(
     source: &BS,
     source_root: &Cid,
-    selectors: &[ActorSelector],
+    patches: &[ActorPatch],
 ) -> Result<ConstructedState, StateConstructionError> {
     let source_tree = StateTree::new_from_root(source, source_root)
         .map_err(|error| StateConstructionError::StateTree(error.to_string()))?;
     let mut requested = BTreeMap::<u64, Vec<String>>::new();
-    for selector in selectors {
+    let mut patches_by_id = BTreeMap::<u64, &ActorPatch>::new();
+    for patch in patches {
         let id = source_tree
-            .lookup_id(&selector.address)
+            .lookup_id(&patch.selector.address)
             .map_err(|error| StateConstructionError::StateTree(error.to_string()))?
-            .ok_or_else(|| StateConstructionError::MissingAddress(selector.input.clone()))?;
+            .ok_or_else(|| StateConstructionError::MissingAddress(patch.selector.input.clone()))?;
         if id == TEST_ACTOR_ID {
             return Err(StateConstructionError::TestActor);
         }
-        requested.entry(id).or_default().push(selector.input.clone());
+        if patches_by_id.insert(id, patch).is_some() {
+            return Err(StateConstructionError::DuplicateActorPatch(id));
+        }
+        requested.entry(id).or_default().push(patch.selector.input.clone());
     }
 
     let mut included_ids = BTreeSet::from(MANDATORY_ACTOR_IDS);
@@ -220,6 +242,44 @@ pub fn construct_standalone_state<BS: Blockstore>(
     actors.get_mut(&INIT_ACTOR_ID).expect("mandatory Init actor was inserted").state =
         new_init_state_cid;
 
+    let mut applied_patches = BTreeMap::<u64, PreparedActorPatch>::new();
+    for (&id, patch) in &patches_by_id {
+        let actor = actors.get_mut(&id).expect("selected actor was inserted");
+        let (runtime_code, storage) = if patch.runtime_code.is_some() || !patch.storage.is_empty() {
+            let applied = apply_evm_patch(
+                source,
+                Rc::clone(&output),
+                &actor.code,
+                &actor.state,
+                patch.runtime_code.as_deref(),
+                &patch.storage,
+            )
+            .map_err(|error| StateConstructionError::Patch { id, message: error.to_string() })?;
+            actor.state = applied.state;
+            (applied.runtime_code, applied.storage)
+        } else {
+            (None, Vec::new())
+        };
+        let balance = patch.balance.as_ref().map(|replacement| {
+            let applied = PreparedBalancePatch {
+                source: actor.balance.clone(),
+                replacement: replacement.clone(),
+            };
+            actor.balance = replacement.clone();
+            applied
+        });
+        let sequence = patch.sequence.map(|replacement| {
+            let applied = PreparedSequencePatch { source: actor.sequence, replacement };
+            actor.sequence = replacement;
+            applied
+        });
+        if runtime_code.is_some() || !storage.is_empty() || balance.is_some() || sequence.is_some()
+        {
+            applied_patches
+                .insert(id, PreparedActorPatch { runtime_code, storage, balance, sequence });
+        }
+    }
+
     let mut output_tree = StateTree::new(Rc::clone(&output), StateTreeVersion::V5)
         .map_err(|error| StateConstructionError::StateTree(error.to_string()))?;
     let mut prepared_actors = Vec::with_capacity(actors.len());
@@ -244,7 +304,11 @@ pub fn construct_standalone_state<BS: Blockstore>(
             code: actor.code,
             source_state: source_states[&id],
             state: actor.state,
+            sequence: actor.sequence,
+            balance: actor.balance.clone(),
+            delegated_address: actor.delegated_address,
             requested_addresses: requested.remove(&id).unwrap_or_default(),
+            patch: applied_patches.remove(&id),
         });
         output_tree.set_actor(id, actor);
     }

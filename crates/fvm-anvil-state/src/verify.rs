@@ -5,14 +5,17 @@
 
 use std::collections::BTreeSet;
 
+use alloy_primitives::keccak256;
 use cid::Cid;
 use fvm::state_tree::StateTree;
 use fvm_ipld_blockstore::Blockstore;
+use fvm_ipld_encoding::IPLD_RAW;
 use fvm_ipld_encoding::{CborStore, tuple::*};
 use fvm_shared::address::Payload;
 use thiserror::Error;
 
-use crate::prepared::{PreparedStateMetadata, load_prepared_metadata};
+use crate::evm::{inspect_evm_state, is_evm_actor_code, read_storage, validate_runtime_code};
+use crate::prepared::{PreparedActorPatch, PreparedStateMetadata, load_prepared_metadata};
 use crate::state::parse_actor_selector;
 use crate::traversal::traverse_blockstore;
 
@@ -47,6 +50,10 @@ pub enum VerificationError {
     MissingActor(u64),
     #[error("prepared actor f0{id} has {field} {actual}, expected {expected}")]
     ActorMismatch { id: u64, field: &'static str, expected: Box<Cid>, actual: Box<Cid> },
+    #[error("prepared actor f0{id} has mismatched {field}")]
+    ActorRecordMismatch { id: u64, field: &'static str },
+    #[error("prepared actor f0{id} has invalid patch metadata: {message}")]
+    InvalidPatch { id: u64, message: String },
     #[error("requested address {address:?} resolves to {actual:?}, expected f0{expected}")]
     AddressMismatch { address: String, expected: u64, actual: Option<u64> },
     #[error("prepared System actor manifest {actual} does not match metadata {expected}")]
@@ -94,6 +101,21 @@ pub fn verify_prepared_archive(
                 expected: Box::new(actor.state),
                 actual: Box::new(actual.state),
             });
+        }
+        if actual.sequence != actor.sequence {
+            return Err(VerificationError::ActorRecordMismatch { id: actor.id, field: "sequence" });
+        }
+        if actual.balance != actor.balance {
+            return Err(VerificationError::ActorRecordMismatch { id: actor.id, field: "balance" });
+        }
+        if actual.delegated_address != actor.delegated_address {
+            return Err(VerificationError::ActorRecordMismatch {
+                id: actor.id,
+                field: "delegated address",
+            });
+        }
+        if let Some(patch) = &actor.patch {
+            verify_actor_patch(store, actor.id, &actual, patch)?;
         }
         for address in &actor.requested_addresses {
             let selector = parse_actor_selector(address.clone())
@@ -170,4 +192,119 @@ pub fn verify_prepared_archive(
 
     let summary = VerificationSummary { actors: actual.len(), reachable_blocks };
     Ok((metadata, summary))
+}
+
+fn verify_actor_patch(
+    store: &impl Blockstore,
+    actor_id: u64,
+    actor: &fvm_shared::state::ActorState,
+    patch: &PreparedActorPatch,
+) -> Result<(), VerificationError> {
+    if patch.runtime_code.is_none()
+        && patch.storage.is_empty()
+        && patch.balance.is_none()
+        && patch.sequence.is_none()
+    {
+        return Err(VerificationError::InvalidPatch {
+            id: actor_id,
+            message: "patch contains no transformations".into(),
+        });
+    }
+    if patch.balance.as_ref().is_some_and(|value| actor.balance != value.replacement) {
+        return Err(VerificationError::InvalidPatch {
+            id: actor_id,
+            message: "balance replacement does not match the actor record".into(),
+        });
+    }
+    if patch.sequence.is_some_and(|value| actor.sequence != value.replacement) {
+        return Err(VerificationError::InvalidPatch {
+            id: actor_id,
+            message: "sequence replacement does not match the actor record".into(),
+        });
+    }
+    if patch.runtime_code.is_none() && patch.storage.is_empty() {
+        return Ok(());
+    }
+    if !is_evm_actor_code(&actor.code) {
+        return Err(VerificationError::InvalidPatch {
+            id: actor_id,
+            message: format!("actor code {} is not builtin-actors v18 EVM code", actor.code),
+        });
+    }
+    let state = inspect_evm_state(store, &actor.state).map_err(|error| {
+        VerificationError::InvalidPatch { id: actor_id, message: error.to_string() }
+    })?;
+    if let Some(code) = &patch.runtime_code {
+        to_word(&code.source_hash, actor_id, "source bytecode hash")?;
+        let replacement_hash =
+            to_word(&code.replacement_hash, actor_id, "replacement bytecode hash")?;
+        if state.bytecode != code.replacement || state.bytecode_hash != replacement_hash {
+            return Err(VerificationError::InvalidPatch {
+                id: actor_id,
+                message: "replacement bytecode CID or hash does not match EVM state".into(),
+            });
+        }
+        if code.replacement.codec() != IPLD_RAW {
+            return Err(VerificationError::InvalidPatch {
+                id: actor_id,
+                message: "replacement bytecode CID is not raw IPLD".into(),
+            });
+        }
+        let bytes = store
+            .get(&code.replacement)
+            .map_err(|error| VerificationError::InvalidPatch {
+                id: actor_id,
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| VerificationError::InvalidPatch {
+                id: actor_id,
+                message: format!("replacement bytecode {} is missing", code.replacement),
+            })?;
+        validate_runtime_code(&bytes).map_err(|error| VerificationError::InvalidPatch {
+            id: actor_id,
+            message: error.to_string(),
+        })?;
+        if keccak256(&bytes).0 != replacement_hash {
+            return Err(VerificationError::InvalidPatch {
+                id: actor_id,
+                message: "replacement bytecode bytes do not match their recorded hash".into(),
+            });
+        }
+    }
+    let mut keys = BTreeSet::new();
+    for storage in &patch.storage {
+        let key = to_word(&storage.key, actor_id, "storage key")?;
+        let _source = to_word(&storage.source, actor_id, "source storage value")?;
+        let replacement = to_word(&storage.replacement, actor_id, "replacement storage value")?;
+        if !keys.insert(key) {
+            return Err(VerificationError::InvalidPatch {
+                id: actor_id,
+                message: format!("storage key 0x{} appears more than once", hex::encode(key)),
+            });
+        }
+        let actual = read_storage(store, &state.contract_state, key).map_err(|error| {
+            VerificationError::InvalidPatch { id: actor_id, message: error.to_string() }
+        })?;
+        if actual != replacement {
+            return Err(VerificationError::InvalidPatch {
+                id: actor_id,
+                message: format!(
+                    "storage key 0x{} does not contain its replacement",
+                    hex::encode(key)
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn to_word(
+    value: &[u8],
+    actor_id: u64,
+    field: &'static str,
+) -> Result<[u8; 32], VerificationError> {
+    value.try_into().map_err(|_| VerificationError::InvalidPatch {
+        id: actor_id,
+        message: format!("{field} must contain exactly 32 bytes"),
+    })
 }

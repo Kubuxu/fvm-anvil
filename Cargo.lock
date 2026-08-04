@@ -2624,6 +2624,7 @@ dependencies = [
 name = "fvm-anvil-state"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "cid",
  "fvm",
@@ -2631,6 +2632,7 @@ dependencies = [
  "fvm_ipld_car",
  "fvm_ipld_encoding",
  "fvm_ipld_hamt",
+ "fvm_ipld_kamt",
  "fvm_shared",
  "hex",
  "multihash-codetable",
@@ -3951,6 +3953,8 @@ dependencies = [
  "anyhow",
  "clap",
  "fvm-anvil-state",
+ "fvm_shared",
+ "hex",
  "serde",
  "serde_json",
 ]

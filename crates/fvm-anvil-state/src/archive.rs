@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::forest_car::{ForestCar, ForestCarWriter};
 use crate::prepared::{PreparedStateMetadata, put_prepared_metadata};
 use crate::snapshot::SnapshotContext;
-use crate::state::{ActorSelector, construct_standalone_state};
+use crate::state::{ActorPatch, construct_standalone_state};
 use crate::traversal::traverse_blockstore;
 use crate::verify::{VerificationSummary, verify_prepared_archive};
 
@@ -77,7 +77,7 @@ impl<BS: Blockstore, OS: Blockstore> Blockstore for LayeredStore<'_, BS, OS> {
 pub fn build_prepared_archive<BS: Blockstore>(
     source: &BS,
     context: &SnapshotContext,
-    selectors: &[ActorSelector],
+    patches: &[ActorPatch],
     network_version: u32,
     output: &Path,
     overwrite: bool,
@@ -96,7 +96,7 @@ pub fn build_prepared_archive<BS: Blockstore>(
         return Err(ArchiveBuildError::MissingParent(parent.to_path_buf()));
     }
 
-    let constructed = construct_standalone_state(source, &context.state_root, selectors)
+    let constructed = construct_standalone_state(source, &context.state_root, patches)
         .map_err(|error| ArchiveBuildError::Construct(error.to_string()))?;
     let metadata = PreparedStateMetadata::new(
         constructed.state_root,
@@ -180,6 +180,7 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     use fvm::state_tree::StateTree;
@@ -192,7 +193,7 @@ mod tests {
     use multihash_codetable::Code;
 
     use super::*;
-    use crate::state::ActorSelector;
+    use crate::state::{ActorPatch, ActorSelector};
 
     #[cfg(unix)]
     #[test]
@@ -289,15 +290,21 @@ mod tests {
             timestamp: 2,
             base_fee: TokenAmount::from_atto(3),
         };
-        let selector = ActorSelector {
-            input: "0x0101010101010101010101010101010101010101".into(),
-            address: target_address,
+        let patch = ActorPatch {
+            selector: ActorSelector {
+                input: "0x0101010101010101010101010101010101010101".into(),
+                address: target_address,
+            },
+            runtime_code: None,
+            storage: BTreeMap::new(),
+            balance: Some(TokenAmount::from_atto(55)),
+            sequence: Some(7),
         };
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("target.press.car.zst");
 
         let summary =
-            build_prepared_archive(source.as_ref(), &context, &[selector], 28, &output, false)
+            build_prepared_archive(source.as_ref(), &context, &[patch], 28, &output, false)
                 .unwrap();
         drop(tree);
         drop(source);
@@ -310,6 +317,16 @@ mod tests {
         let output_tree = StateTree::new_from_root(&archive, &metadata.state_root).unwrap();
         assert_eq!(output_tree.lookup_id(&target_address).unwrap(), Some(100));
         assert_eq!(output_tree.lookup_id(&target_robust_address).unwrap(), Some(100));
+        let target_actor = output_tree.get_actor(100).unwrap().unwrap();
+        assert_eq!(target_actor.balance, TokenAmount::from_atto(55));
+        assert_eq!(target_actor.sequence, 7);
+        let recorded = metadata.actors.iter().find(|actor| actor.id == 100).unwrap();
+        let recorded_patch = recorded.patch.as_ref().unwrap();
+        assert_eq!(
+            recorded_patch.balance.as_ref().unwrap().replacement,
+            TokenAmount::from_atto(55)
+        );
+        assert_eq!(recorded_patch.sequence.unwrap().replacement, 7);
         assert!(output_tree.get_actor(101).unwrap().is_none());
         assert!(archive.get(&target_leaf).unwrap().is_some());
         assert!(archive.get(&target_code).unwrap().is_some());
