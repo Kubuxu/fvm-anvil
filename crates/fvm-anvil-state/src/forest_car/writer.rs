@@ -34,6 +34,40 @@ const EMPTY: u64 = u64::MAX;
 const SKIP_MAGIC: [u8; 4] = [0x50, 0x2a, 0x4d, 0x18];
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
+const IO_BUFFER: usize = 64 * 1024;
+
+struct CountingWriter<W> {
+    inner: W,
+    written: u64,
+}
+
+impl<W> CountingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, written: 0 }
+    }
+
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let count = self.inner.write(bytes)?;
+        self.written = self
+            .written
+            .checked_add(u64::try_from(count).expect("write count fits u64"))
+            .ok_or_else(|| io::Error::other("compressed frame length overflow"))?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+type FrameEncoder = zstd::stream::write::Encoder<'static, CountingWriter<BufWriter<File>>>;
+
 #[derive(Debug, Error)]
 pub enum ForestCarWriterError {
     #[error("I/O while writing ForestCAR: {0}")]
@@ -84,8 +118,8 @@ pub struct ForestCarWriter {
     frame_path: PathBuf,
     index_path: PathBuf,
     output: File,
-    entries: File,
-    frame: Option<zstd::stream::write::Encoder<'static, File>>,
+    entries: BufWriter<File>,
+    frame: Option<FrameEncoder>,
     frame_offset: u64,
     frame_has_blocks: bool,
     committed: bool,
@@ -121,7 +155,7 @@ impl ForestCarWriter {
             encoder.finish()?;
         }
         let frame_offset = output.stream_position()?;
-        let frame = zstd::stream::write::Encoder::new(frame_file, zstd::DEFAULT_COMPRESSION_LEVEL)?;
+        let frame = new_frame_encoder(frame_file)?;
 
         let writer = Self {
             output_path,
@@ -131,7 +165,7 @@ impl ForestCarWriter {
             frame_path,
             index_path,
             output,
-            entries,
+            entries: BufWriter::with_capacity(IO_BUFFER, entries),
             frame: Some(frame),
             frame_offset,
             frame_has_blocks: false,
@@ -167,10 +201,11 @@ impl ForestCarWriter {
         if self.frame_has_blocks {
             self.flush_frame()?;
         }
-        self.entries.sync_all()?;
-        let entry_count = self.entries.metadata()?.len() / RECORD_LEN;
-        sort_records(&mut self.entries, &self.merge_path, entry_count)?;
-        let (unique, collisions) = count_records(&mut self.entries, entry_count)?;
+        self.entries.flush()?;
+        self.entries.get_ref().sync_all()?;
+        let entry_count = self.entries.get_ref().metadata()?.len() / RECORD_LEN;
+        sort_records(self.entries.get_mut(), &self.merge_path, entry_count)?;
+        let (unique, collisions) = count_records(self.entries.get_mut(), entry_count)?;
         let initial_buckets = initial_width(unique)?;
         let (logical_len, longest_distance) = self.build_index(entry_count, initial_buckets)?;
         patch_index_header(&mut self.index_file()?, longest_distance, collisions, initial_buckets)?;
@@ -195,19 +230,21 @@ impl ForestCarWriter {
     fn frame_len(&mut self) -> Result<u64> {
         let frame = self.frame.as_mut().expect("frame encoder is present");
         frame.flush()?;
-        Ok(frame.get_ref().metadata()?.len())
+        Ok(frame.get_ref().written)
     }
 
     fn flush_frame(&mut self) -> Result<()> {
         let encoder = self.frame.take().expect("frame encoder is present");
-        let mut frame_file = encoder.finish()?;
+        let counted = encoder.finish()?;
+        let mut buffered = counted.into_inner();
+        buffered.flush()?;
+        let mut frame_file = buffered.into_inner().map_err(|error| error.into_error())?;
         frame_file.seek(SeekFrom::Start(0))?;
         io::copy(&mut frame_file, &mut self.output)?;
         self.frame_offset = self.output.stream_position()?;
         frame_file.set_len(0)?;
         frame_file.seek(SeekFrom::Start(0))?;
-        self.frame =
-            Some(zstd::stream::write::Encoder::new(frame_file, zstd::DEFAULT_COMPRESSION_LEVEL)?);
+        self.frame = Some(new_frame_encoder(frame_file)?);
         self.frame_has_blocks = false;
         Ok(())
     }
@@ -221,13 +258,14 @@ impl ForestCarWriter {
         index.set_len(0)?;
         index.write_all(&INDEX_V1.to_le_bytes())?;
         index.write_all(&[0; 24])?;
-        self.entries.seek(SeekFrom::Start(0))?;
+        let entries = self.entries.get_mut();
+        entries.seek(SeekFrom::Start(0))?;
 
         let mut previous = None;
         let mut written_slots = 0_u64;
         let mut longest_distance = 0_u64;
         for _ in 0..entry_count {
-            let record = read_record(&mut self.entries)?;
+            let record = read_record(entries)?;
             if previous == Some(record) {
                 continue;
             }
@@ -268,6 +306,13 @@ impl Drop for ForestCarWriter {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+fn new_frame_encoder(file: File) -> io::Result<FrameEncoder> {
+    zstd::stream::write::Encoder::new(
+        CountingWriter::new(BufWriter::with_capacity(IO_BUFFER, file)),
+        zstd::DEFAULT_COMPRESSION_LEVEL,
+    )
 }
 
 fn create_scratch(parent: &Path, stem: &str, kind: &str) -> io::Result<(PathBuf, File)> {

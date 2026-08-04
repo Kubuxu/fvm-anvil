@@ -17,7 +17,9 @@ use crate::prepared::{PreparedStateMetadata, put_prepared_metadata};
 use crate::snapshot::SnapshotContext;
 use crate::state::{ActorPatch, construct_standalone_state};
 use crate::traversal::traverse_blockstore;
-use crate::verify::{VerificationSummary, verify_prepared_archive};
+use crate::verify::{VerificationSummary, verify_prepared_archive_with_progress};
+#[cfg(test)]
+use crate::verify::{validate_prepared_archive, verify_prepared_archive};
 
 const MIN_NETWORK_VERSION: u32 = 21;
 const MAX_NETWORK_VERSION: u32 = 28;
@@ -28,6 +30,22 @@ pub struct BuildSummary {
     pub state_root: Cid,
     pub actors: usize,
     pub blocks: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArchiveBuildStage {
+    Constructing,
+    Writing,
+    Indexing,
+    Verifying,
+    Publishing,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArchiveBuildProgress {
+    pub stage: ArchiveBuildStage,
+    pub blocks: u64,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Error)]
@@ -82,6 +100,26 @@ pub fn build_prepared_archive<BS: Blockstore>(
     output: &Path,
     overwrite: bool,
 ) -> Result<BuildSummary, ArchiveBuildError> {
+    build_prepared_archive_with_progress(
+        source,
+        context,
+        patches,
+        network_version,
+        output,
+        overwrite,
+        |_| {},
+    )
+}
+
+pub fn build_prepared_archive_with_progress<BS: Blockstore>(
+    source: &BS,
+    context: &SnapshotContext,
+    patches: &[ActorPatch],
+    network_version: u32,
+    output: &Path,
+    overwrite: bool,
+    mut progress: impl FnMut(ArchiveBuildProgress),
+) -> Result<BuildSummary, ArchiveBuildError> {
     if !(MIN_NETWORK_VERSION..=MAX_NETWORK_VERSION).contains(&network_version) {
         return Err(ArchiveBuildError::UnsupportedNetworkVersion(network_version));
     }
@@ -96,6 +134,7 @@ pub fn build_prepared_archive<BS: Blockstore>(
         return Err(ArchiveBuildError::MissingParent(parent.to_path_buf()));
     }
 
+    progress(ArchiveBuildProgress { stage: ArchiveBuildStage::Constructing, blocks: 0, bytes: 0 });
     let constructed = construct_standalone_state(source, &context.state_root, patches)
         .map_err(|error| ArchiveBuildError::Construct(error.to_string()))?;
     let metadata = PreparedStateMetadata::new(
@@ -123,32 +162,79 @@ pub fn build_prepared_archive<BS: Blockstore>(
     std::fs::remove_file(&temporary)
         .map_err(|error| ArchiveBuildError::Writer(error.to_string()))?;
 
+    progress(ArchiveBuildProgress { stage: ArchiveBuildStage::Writing, blocks: 0, bytes: 0 });
     let mut writer = ForestCarWriter::create(&temporary, &[metadata_root])
         .map_err(|error| ArchiveBuildError::Writer(error.to_string()))?;
     writer
         .write_block(&metadata_root, &metadata_block)
         .map_err(|error| ArchiveBuildError::Writer(error.to_string()))?;
     let layered = LayeredStore { overlay: constructed.store.as_ref(), source };
+    let mut copied_blocks = 0_u64;
+    let mut copied_bytes = 0_u64;
     let copied = traverse_blockstore(
         &layered,
         &[constructed.state_root],
         |cid| constructed.external_links.contains(cid),
-        |cid, data| writer.write_block(cid, data).map_err(|error| anyhow!(error)),
+        |cid, data| {
+            writer.write_block(cid, data).map_err(|error| anyhow!(error))?;
+            copied_blocks = copied_blocks
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("copied block count overflow"))?;
+            copied_bytes = copied_bytes
+                .checked_add(u64::try_from(data.len()).expect("slice length fits u64"))
+                .ok_or_else(|| anyhow!("copied byte count overflow"))?;
+            if copied_blocks.is_multiple_of(100_000) {
+                progress(ArchiveBuildProgress {
+                    stage: ArchiveBuildStage::Writing,
+                    blocks: copied_blocks,
+                    bytes: copied_bytes,
+                });
+            }
+            Ok(())
+        },
     )
     .map_err(|error| ArchiveBuildError::Traversal(error.to_string()))?;
+    if !copied_blocks.is_multiple_of(100_000) {
+        progress(ArchiveBuildProgress {
+            stage: ArchiveBuildStage::Writing,
+            blocks: copied_blocks,
+            bytes: copied_bytes,
+        });
+    }
+    progress(ArchiveBuildProgress {
+        stage: ArchiveBuildStage::Indexing,
+        blocks: copied_blocks,
+        bytes: copied_bytes,
+    });
     writer.finish().map_err(|error| ArchiveBuildError::Writer(error.to_string()))?;
 
+    progress(ArchiveBuildProgress {
+        stage: ArchiveBuildStage::Verifying,
+        blocks: 0,
+        bytes: copied_bytes,
+    });
     let archive = ForestCar::open(&temporary)
         .map_err(|error| ArchiveBuildError::Reopen(error.to_string()))?;
     let (_, VerificationSummary { actors, reachable_blocks }) =
-        verify_prepared_archive(&archive, archive.roots())
-            .map_err(|error| ArchiveBuildError::Verify(error.to_string()))?;
+        verify_prepared_archive_with_progress(&archive, archive.roots(), |blocks| {
+            progress(ArchiveBuildProgress {
+                stage: ArchiveBuildStage::Verifying,
+                blocks,
+                bytes: copied_bytes,
+            });
+        })
+        .map_err(|error| ArchiveBuildError::Verify(error.to_string()))?;
     if reachable_blocks != copied {
         return Err(ArchiveBuildError::Verify(format!(
             "wrote {copied} reachable blocks but reopened {reachable_blocks}"
         )));
     }
 
+    progress(ArchiveBuildProgress {
+        stage: ArchiveBuildStage::Publishing,
+        blocks: copied_blocks,
+        bytes: copied_bytes,
+    });
     let persist =
         if overwrite { temporary.persist(output) } else { temporary.persist_noclobber(output) };
     persist.map_err(|error| ArchiveBuildError::Publish(error.error.to_string()))?;
@@ -184,7 +270,7 @@ mod tests {
     use std::rc::Rc;
 
     use fvm::state_tree::StateTree;
-    use fvm_ipld_blockstore::{Blockstore as _, MemoryBlockstore};
+    use fvm_ipld_blockstore::{Blockstore, MemoryBlockstore};
     use fvm_ipld_encoding::{CborStore, tuple::*};
     use fvm_ipld_hamt::{Config, Hamt};
     use fvm_shared::address::Address;
@@ -216,6 +302,21 @@ mod tests {
     #[derive(Serialize_tuple)]
     struct LinkedState {
         child: Cid,
+    }
+
+    struct MissingBlockstore<'a> {
+        source: &'a ForestCar,
+        missing: Cid,
+    }
+
+    impl Blockstore for MissingBlockstore<'_> {
+        fn get(&self, cid: &Cid) -> anyhow::Result<Option<Vec<u8>>> {
+            if *cid == self.missing { Ok(None) } else { self.source.get(cid) }
+        }
+
+        fn put_keyed(&self, _: &Cid, _: &[u8]) -> anyhow::Result<()> {
+            unreachable!()
+        }
     }
 
     fn external(seed: u8) -> Cid {
@@ -303,13 +404,40 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("target.press.car.zst");
 
-        let summary =
-            build_prepared_archive(source.as_ref(), &context, &[patch], 28, &output, false)
-                .unwrap();
+        let mut progress = Vec::new();
+        let summary = build_prepared_archive_with_progress(
+            source.as_ref(),
+            &context,
+            &[patch],
+            28,
+            &output,
+            false,
+            |update| progress.push(update.stage),
+        )
+        .unwrap();
+        assert_eq!(
+            progress,
+            [
+                ArchiveBuildStage::Constructing,
+                ArchiveBuildStage::Writing,
+                ArchiveBuildStage::Writing,
+                ArchiveBuildStage::Indexing,
+                ArchiveBuildStage::Verifying,
+                ArchiveBuildStage::Verifying,
+                ArchiveBuildStage::Publishing,
+            ]
+        );
         drop(tree);
         drop(source);
 
         let archive = ForestCar::open(&output).unwrap();
+        let incomplete = MissingBlockstore { source: &archive, missing: target_leaf };
+        let startup_metadata = validate_prepared_archive(&incomplete, archive.roots()).unwrap();
+        assert_eq!(startup_metadata.state_root, summary.state_root);
+        assert!(matches!(
+            verify_prepared_archive(&incomplete, archive.roots()),
+            Err(crate::verify::VerificationError::IncompleteDag(_))
+        ));
         let (metadata, verified) = verify_prepared_archive(&archive, archive.roots()).unwrap();
         assert_eq!(summary.actors, 6);
         assert_eq!(verified.actors, 6);

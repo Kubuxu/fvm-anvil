@@ -68,6 +68,34 @@ pub fn verify_prepared_archive(
     store: &impl Blockstore,
     roots: &[Cid],
 ) -> Result<(PreparedStateMetadata, VerificationSummary), VerificationError> {
+    verify_prepared_archive_with_progress(store, roots, |_| {})
+}
+
+pub fn verify_prepared_archive_with_progress(
+    store: &impl Blockstore,
+    roots: &[Cid],
+    progress: impl FnMut(u64),
+) -> Result<(PreparedStateMetadata, VerificationSummary), VerificationError> {
+    verify_prepared_archive_inner(store, roots, true, progress)
+}
+
+/// Validates prepared metadata and its state-tree records without traversing every actor-state DAG.
+///
+/// Press performs full reachability verification before publishing an archive. Consumers that need
+/// bounded startup work can use this check and let missing actor-state blocks fail on first access.
+pub fn validate_prepared_archive(
+    store: &impl Blockstore,
+    roots: &[Cid],
+) -> Result<PreparedStateMetadata, VerificationError> {
+    verify_prepared_archive_inner(store, roots, false, |_| {}).map(|(metadata, _)| metadata)
+}
+
+fn verify_prepared_archive_inner(
+    store: &impl Blockstore,
+    roots: &[Cid],
+    verify_reachability: bool,
+    mut progress: impl FnMut(u64),
+) -> Result<(PreparedStateMetadata, VerificationSummary), VerificationError> {
     let (_, metadata) = load_prepared_metadata(store, roots)
         .map_err(|error| VerificationError::Metadata(error.to_string()))?
         .ok_or(VerificationError::NotPreparedState)?;
@@ -180,17 +208,33 @@ pub fn verify_prepared_archive(
     if actor_states.contains(&metadata.actor_manifest_data) {
         return Err(VerificationError::InvalidExternalCode(Box::new(metadata.actor_manifest_data)));
     }
+    let actors = actual.len();
+    if !verify_reachability {
+        return Ok((metadata, VerificationSummary { actors, reachable_blocks: 0 }));
+    }
     let mut external = external_codes;
     external.insert(metadata.actor_manifest_data);
+    let mut verified_blocks = 0_u64;
     let reachable_blocks = traverse_blockstore(
         store,
         &[metadata.state_root],
         |cid| external.contains(cid),
-        |_, _| Ok(()),
+        |_, _| {
+            verified_blocks = verified_blocks
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("verified block count overflow"))?;
+            if verified_blocks.is_multiple_of(100_000) {
+                progress(verified_blocks);
+            }
+            Ok(())
+        },
     )
     .map_err(|error| VerificationError::IncompleteDag(error.to_string()))?;
+    if !verified_blocks.is_multiple_of(100_000) {
+        progress(verified_blocks);
+    }
 
-    let summary = VerificationSummary { actors: actual.len(), reachable_blocks };
+    let summary = VerificationSummary { actors, reachable_blocks };
     Ok((metadata, summary))
 }
 

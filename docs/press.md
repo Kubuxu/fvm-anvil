@@ -91,6 +91,9 @@ press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
 press inspect OUTPUT
 ```
 
+The reusable source-pinning, dependency-discovery, proxy-patch, and runtime-proof workflow is
+recorded in [`press-recipes.md`](press-recipes.md).
+
 Recipe version 1 selects actors by stable user-facing addresses and optionally applies explicit
 transformations:
 
@@ -210,10 +213,9 @@ on an imported mainnet contract.
 - streaming ForestCAR output;
 - output provenance.
 
-A successful build performs lightweight structural checks while the output is still open: the
-metadata and root decode, the new state tree loads, requested addresses resolve to the copied actor
-IDs, and requested patches read back from the new state. Actor-bundle compatibility is not a `press`
-build gate.
+A successful build reopens the completed archive, validates metadata, actor records, requested
+addresses, and patches, and traverses every reachable actor-state block before publication.
+Actor-bundle compatibility is not a `press` build gate.
 
 ### `fvm-anvil`
 
@@ -225,6 +227,12 @@ build gate.
 - adding and funding generated development callers through the imported Init state;
 - maintaining the writable execution overlay;
 - mining, snapshots, reverts, RPC indexes, and gas diagnostics.
+
+Node startup deliberately does not repeat Press's full actor-DAG traversal. It validates prepared
+metadata, the compact outer state tree, actor records, requested aliases, patches, and manifest
+linkage. This keeps startup proportional to the prepared state boundary rather than an imported
+actor's full storage; an archive missing an unpatched actor-state block fails when that block is
+first accessed.
 
 The root stored by `press` is the prepared imported root. The node immediately derives a writable
 current root when it adds development accounts. `filecoin_getStateRoots` reports both roots, and the

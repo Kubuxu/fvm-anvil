@@ -18,7 +18,7 @@ use fvm_anvil_eth::{
     project_event,
 };
 use fvm_anvil_state::{
-    ForestCar, prepared::PreparedStateMetadata, verify::verify_prepared_archive,
+    ForestCar, prepared::PreparedStateMetadata, verify::validate_prepared_archive,
 };
 use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding::CborStore;
@@ -1176,7 +1176,7 @@ fn load_prepared_state(path: &std::path::Path) -> Result<PreparedInput, NodeErro
         path: path.to_path_buf(),
         detail: error.to_string(),
     })?;
-    let (metadata, _) = verify_prepared_archive(&archive, archive.roots()).map_err(|error| {
+    let metadata = validate_prepared_archive(&archive, archive.roots()).map_err(|error| {
         NodeError::PreparedState { path: path.to_path_buf(), detail: error.to_string() }
     })?;
     Ok(PreparedInput { archive, metadata })

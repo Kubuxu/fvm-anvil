@@ -4,11 +4,14 @@ mod recipe;
 use std::fmt::{Display, Write as _};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use fvm_anvil_state::{
-    archive::{BuildSummary, build_prepared_archive},
+    archive::{
+        ArchiveBuildProgress, ArchiveBuildStage, BuildSummary, build_prepared_archive_with_progress,
+    },
     forest_car::ForestCar,
     prepared::{PreparedStateMetadata, load_prepared_metadata},
     snapshot::{SnapshotContext, inspect_filecoin_snapshot},
@@ -107,11 +110,44 @@ fn build(
         .with_context(|| format!("failed to inspect source snapshot {}", snapshot.display()))?;
     let recipe = Recipe::load(recipe_path)?;
     let patches = recipe.patches()?;
-    let summary =
-        build_prepared_archive(&source, &context, &patches, network_version, output, force)
-            .with_context(|| format!("failed to build prepared archive {}", output.display()))?;
+    let started = Instant::now();
+    let summary = build_prepared_archive_with_progress(
+        &source,
+        &context,
+        &patches,
+        network_version,
+        output,
+        force,
+        |progress| report_build_progress(progress, started.elapsed()),
+    )
+    .with_context(|| format!("failed to build prepared archive {}", output.display()))?;
     let result = format_build_summary(output, &summary);
     std::io::stdout().lock().write_all(result.as_bytes()).context("failed to write build result")
+}
+
+fn report_build_progress(progress: ArchiveBuildProgress, elapsed: Duration) {
+    let status = match progress.stage {
+        ArchiveBuildStage::Constructing => "constructing selected state".to_owned(),
+        ArchiveBuildStage::Writing if progress.blocks == 0 => {
+            "writing selected actor state".to_owned()
+        }
+        ArchiveBuildStage::Writing => format!(
+            "wrote {} blocks ({:.1} MiB uncompressed)",
+            progress.blocks,
+            progress.bytes as f64 / (1024.0 * 1024.0)
+        ),
+        ArchiveBuildStage::Indexing => {
+            format!("indexing {} written blocks", progress.blocks)
+        }
+        ArchiveBuildStage::Verifying if progress.blocks == 0 => {
+            "verifying completed archive".to_owned()
+        }
+        ArchiveBuildStage::Verifying => {
+            format!("verified {} reachable blocks", progress.blocks)
+        }
+        ArchiveBuildStage::Publishing => "publishing completed archive".to_owned(),
+    };
+    let _ = writeln!(std::io::stderr().lock(), "press: [{:.1}s] {status}", elapsed.as_secs_f64());
 }
 
 fn paths_refer_to_same_file(source: &Path, output: &Path) -> Result<bool> {

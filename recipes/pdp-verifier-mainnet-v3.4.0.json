@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "actors": [
+    {
+      "address": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
+      "storage": {
+        "0x9016d09d72d40fdae2fd8ceac6b6234c7706214fd39c1cd1e609a0528c199300": "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+      }
+    },
+    {
+      "address": "0xb41A97FEDD2D9497C639A643ec75E56CbCeDe8BA"
+    }
+  ]
+}

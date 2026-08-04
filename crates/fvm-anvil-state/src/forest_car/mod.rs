@@ -1,17 +1,20 @@
 //! Random-access reader for ForestCAR archives.
 //!
-//! The embedded-index layout and its hash function are adapted from Forest's
-//! `src/db/car/forest.rs` and `src/db/car/forest/index` (ChainSafe Systems,
-//! Apache-2.0 OR MIT). This module deliberately retains only the reader needed
-//! for lookup: index slots stay on disk and block frames are decoded on demand.
+//! The embedded-index layout, hash function, and decompressed-frame caching are adapted from
+//! Forest's `src/db/car/forest.rs` and `src/db/car/forest/index` (ChainSafe Systems,
+//! Apache-2.0 OR MIT). Index slots stay on disk, while decoded frames use a bounded 512 MiB cache
+//! so adjacent block reads do not repeatedly decompress the same source data.
 
 pub mod writer;
 
 pub use writer::{ForestCarWriter, ForestCarWriterError};
 
 use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::{self, Read},
+    mem,
     path::Path,
 };
 
@@ -32,6 +35,7 @@ const EMPTY_HASH: u64 = u64::MAX;
 const MAX_HEADER_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BLOCK_BYTES: u64 = 1024 * 1024 * 1024;
 const INDEX_FRAME_LEN: u64 = 512 * 1024 * 1024;
+const DEFAULT_FRAME_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ForestCarError {
@@ -50,6 +54,7 @@ pub struct ForestCar {
     file: File,
     roots: Vec<Cid>,
     index: EmbeddedIndex,
+    frame_cache: RefCell<FrameCache>,
 }
 
 impl ForestCar {
@@ -80,7 +85,7 @@ impl ForestCar {
             return Err(ForestCarError::Invalid("CAR header has no roots"));
         }
         let index = EmbeddedIndex::open(&file, index_start, footer_offset)?;
-        Ok(Self { file, roots, index })
+        Ok(Self { file, roots, index, frame_cache: RefCell::new(FrameCache::default()) })
     }
 
     pub fn roots(&self) -> &[Cid] {
@@ -92,8 +97,69 @@ impl ForestCar {
             if frame_offset >= self.index.physical_start {
                 return Err(ForestCarError::Invalid("index points outside block frames"));
             }
-            read_frame_for_cid(&self.file, frame_offset, wanted)
+            if let Some(result) = self.frame_cache.borrow().get(frame_offset, wanted) {
+                return Ok(result);
+            }
+            let blocks = read_frame(&self.file, frame_offset)?;
+            let result = blocks.get(wanted).cloned();
+            self.frame_cache.borrow_mut().insert(frame_offset, blocks);
+            Ok(result)
         })
+    }
+}
+
+struct CachedFrame {
+    blocks: HashMap<Cid, Vec<u8>>,
+    weight: usize,
+}
+
+struct FrameCache {
+    max_weight: usize,
+    weight: usize,
+    order: VecDeque<u64>,
+    entries: HashMap<u64, CachedFrame>,
+}
+
+impl Default for FrameCache {
+    fn default() -> Self {
+        Self {
+            max_weight: DEFAULT_FRAME_CACHE_BYTES,
+            weight: 0,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl FrameCache {
+    fn get(&self, offset: u64, cid: &Cid) -> Option<Option<Vec<u8>>> {
+        self.entries.get(&offset).map(|frame| frame.blocks.get(cid).cloned())
+    }
+
+    fn insert(&mut self, offset: u64, blocks: HashMap<Cid, Vec<u8>>) {
+        if self.entries.contains_key(&offset) {
+            return;
+        }
+        let weight = blocks.iter().fold(0usize, |weight, (cid, data)| {
+            weight
+                .saturating_add(mem::size_of::<(Cid, Vec<u8>)>())
+                .saturating_add(cid.encoded_len())
+                .saturating_add(data.len())
+        });
+        if weight > self.max_weight {
+            return;
+        }
+        while self.weight.saturating_add(weight) > self.max_weight {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(frame) = self.entries.remove(&oldest) {
+                self.weight -= frame.weight;
+            }
+        }
+        self.order.push_back(offset);
+        self.entries.insert(offset, CachedFrame { blocks, weight });
+        self.weight += weight;
     }
 }
 
@@ -292,18 +358,15 @@ fn read_roots(file: &File) -> Result<Vec<Cid>, ForestCarError> {
     Ok(header.roots)
 }
 
-fn read_frame_for_cid(
-    file: &File,
-    offset: u64,
-    wanted: &Cid,
-) -> Result<Option<Vec<u8>>, ForestCarError> {
+fn read_frame(file: &File, offset: u64) -> Result<HashMap<Cid, Vec<u8>>, ForestCarError> {
     let reader = PositionedFile::new(file, offset);
     let decoder = zstd::stream::read::Decoder::new(reader)?;
     let mut decoder = decoder.single_frame();
+    let mut blocks = HashMap::new();
     loop {
         let frame_len = match read_uvarint_reader(&mut decoder) {
             Ok(value) => value,
-            Err(ForestCarError::Invalid("unexpected end of frame")) => return Ok(None),
+            Err(ForestCarError::Invalid("unexpected end of frame")) => return Ok(blocks),
             Err(error) => return Err(error),
         };
         let stored = Cid::read_bytes(&mut decoder)
@@ -315,17 +378,14 @@ fn read_frame_for_cid(
         if data_len > MAX_BLOCK_BYTES {
             return Err(ForestCarError::Invalid("block exceeds maximum size"));
         }
-        if stored == *wanted {
-            let mut data = vec![
-                0_u8;
-                usize::try_from(data_len).map_err(|_| ForestCarError::Invalid(
-                    "block length overflows memory"
-                ))?
-            ];
-            decoder.read_exact(&mut data)?;
-            return Ok(Some(data));
-        }
-        copy_exact_to_sink(&mut decoder, data_len)?;
+        let mut data = vec![
+            0_u8;
+            usize::try_from(data_len).map_err(|_| ForestCarError::Invalid(
+                "block length overflows memory"
+            ))?
+        ];
+        decoder.read_exact(&mut data)?;
+        blocks.insert(stored, data);
     }
 }
 
@@ -456,16 +516,6 @@ fn read_uvarint_reader(reader: &mut impl Read) -> Result<u64, ForestCarError> {
         }
     }
     Err(ForestCarError::Invalid("invalid unsigned varint"))
-}
-
-fn copy_exact_to_sink(reader: &mut impl Read, mut len: u64) -> Result<(), ForestCarError> {
-    let mut buffer = [0_u8; 8192];
-    while len != 0 {
-        let count = usize::try_from(len.min(buffer.len() as u64)).expect("bounded buffer length");
-        reader.read_exact(&mut buffer[..count])?;
-        len -= u64::try_from(count).expect("count fits u64");
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -610,6 +660,24 @@ mod tests {
         let car = ForestCar::open(file.path()).unwrap();
         assert_eq!(car.roots(), &[root]);
         assert_eq!(car.get(&block).unwrap(), Some(b"payload".to_vec()));
+    }
+
+    #[test]
+    fn caches_all_blocks_in_a_decompressed_frame() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("cached.forest.car.zst");
+        let first = cid(b"first");
+        let second = cid(b"second");
+        let mut writer = ForestCarWriter::create(&output, &[first]).unwrap();
+        writer.write_block(&first, b"one").unwrap();
+        writer.write_block(&second, b"two").unwrap();
+        writer.finish().unwrap();
+
+        let car = ForestCar::open(output).unwrap();
+        assert_eq!(car.get(&first).unwrap(), Some(b"one".to_vec()));
+        assert_eq!(car.frame_cache.borrow().entries.len(), 1);
+        assert_eq!(car.get(&second).unwrap(), Some(b"two".to_vec()));
+        assert_eq!(car.frame_cache.borrow().entries.len(), 1);
     }
     #[test]
     fn returns_none_when_index_has_no_cid() {
