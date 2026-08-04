@@ -6,7 +6,8 @@ Last updated: 2026-08-04
 Current implementation: storage, standalone actor extraction, contract patches, and node import are
 complete. `press build` resolves recipe addresses, preserves actor IDs and source Init aliases,
 rebuilds a V5 state tree, applies v18 EVM runtime-code and storage changes, writes indexed
-ForestCAR, and reopens the result for structural verification. `fvm-anvil --state
+ForestCAR, and reopens the result for structural validation. Passing `--verify` additionally reads
+every reachable block back through the completed archive's index. `fvm-anvil --state
 <PRESS_ARCHIVE>` mounts that output as a read-only base, validates its NV28/v18 execution context,
 and funds development callers in a writable overlay. The workflow imported patched mainnet WFIL at
 epoch 6,251,280, executed a transaction, returned its receipt and FVM gas breakdown, and retained
@@ -87,9 +88,15 @@ The source snapshot is an invocation input so the same recipe can be rerun again
 
 ```text
 press inspect SNAPSHOT
-press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
+press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT [--verify]
 press inspect OUTPUT
 ```
+
+Every build reopens the completed archive and validates its metadata, compact state tree, actor
+records, requested aliases, patches, and manifest linkage before atomic publication. `--verify`
+additionally traverses every reachable actor-state block through the generated ForestCAR index. That
+full readback audit is useful for distributed artifacts but is disabled by default because the
+initial export traversal has already read and copied the complete selected DAG.
 
 The reusable source-pinning, dependency-discovery, proxy-patch, and runtime-proof workflow is
 recorded in [`press-recipes.md`](press-recipes.md).
@@ -213,9 +220,10 @@ on an imported mainnet contract.
 - streaming ForestCAR output;
 - output provenance.
 
-A successful build reopens the completed archive, validates metadata, actor records, requested
-addresses, and patches, and traverses every reachable actor-state block before publication.
-Actor-bundle compatibility is not a `press` build gate.
+A successful build reopens the completed archive and validates metadata, actor records, requested
+addresses, patches, and manifest linkage before publication. With `--verify`, it also traverses every
+reachable actor-state block through the completed archive's index. Actor-bundle compatibility is not
+a `press` build gate.
 
 ### `fvm-anvil`
 
@@ -228,7 +236,7 @@ Actor-bundle compatibility is not a `press` build gate.
 - maintaining the writable execution overlay;
 - mining, snapshots, reverts, RPC indexes, and gas diagnostics.
 
-Node startup deliberately does not repeat Press's full actor-DAG traversal. It validates prepared
+Node startup uses the same bounded validation as a default Press build. It validates prepared
 metadata, the compact outer state tree, actor records, requested aliases, patches, and manifest
 linkage. This keeps startup proportional to the prepared state boundary rather than an imported
 actor's full storage; an archive missing an unpatched actor-state block fails when that block is

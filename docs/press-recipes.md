@@ -76,9 +76,10 @@ target/release/press inspect snapshots/OUTPUT.press.car.zst
 ```
 
 Build progress is written to stderr. The final build summary remains on stdout.
-Progress reports construction, blocks and uncompressed bytes written, index construction, reachable
-blocks verified, and publication. The completed archive is published atomically only after structural
-verification.
+Progress reports construction, blocks and uncompressed bytes written, index construction, compact
+validation, and publication. The completed archive is published atomically only after validation.
+Pass `--verify` to additionally read every reachable block back through the completed archive's
+index before publication; this full audit is disabled by default for large actor DAGs.
 
 Inspection must show:
 

@@ -81,8 +81,8 @@ pub fn verify_prepared_archive_with_progress(
 
 /// Validates prepared metadata and its state-tree records without traversing every actor-state DAG.
 ///
-/// Press performs full reachability verification before publishing an archive. Consumers that need
-/// bounded startup work can use this check and let missing actor-state blocks fail on first access.
+/// Archive builders and consumers can use this bounded check before publication or startup. Missing
+/// unpatched actor-state blocks then fail on first access unless full reachability is checked too.
 pub fn validate_prepared_archive(
     store: &impl Blockstore,
     roots: &[Cid],

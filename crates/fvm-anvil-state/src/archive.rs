@@ -17,12 +17,21 @@ use crate::prepared::{PreparedStateMetadata, put_prepared_metadata};
 use crate::snapshot::SnapshotContext;
 use crate::state::{ActorPatch, construct_standalone_state};
 use crate::traversal::traverse_blockstore;
-use crate::verify::{VerificationSummary, verify_prepared_archive_with_progress};
 #[cfg(test)]
-use crate::verify::{validate_prepared_archive, verify_prepared_archive};
+use crate::verify::verify_prepared_archive;
+use crate::verify::{
+    VerificationSummary, validate_prepared_archive, verify_prepared_archive_with_progress,
+};
 
 const MIN_NETWORK_VERSION: u32 = 21;
 const MAX_NETWORK_VERSION: u32 = 28;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArchiveBuildOptions {
+    pub network_version: u32,
+    pub overwrite: bool,
+    pub verify_output: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BuildSummary {
@@ -30,6 +39,7 @@ pub struct BuildSummary {
     pub state_root: Cid,
     pub actors: usize,
     pub blocks: u64,
+    pub reachable_dag_verified: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +47,7 @@ pub enum ArchiveBuildStage {
     Constructing,
     Writing,
     Indexing,
+    Validating,
     Verifying,
     Publishing,
 }
@@ -96,34 +107,24 @@ pub fn build_prepared_archive<BS: Blockstore>(
     source: &BS,
     context: &SnapshotContext,
     patches: &[ActorPatch],
-    network_version: u32,
     output: &Path,
-    overwrite: bool,
+    options: ArchiveBuildOptions,
 ) -> Result<BuildSummary, ArchiveBuildError> {
-    build_prepared_archive_with_progress(
-        source,
-        context,
-        patches,
-        network_version,
-        output,
-        overwrite,
-        |_| {},
-    )
+    build_prepared_archive_with_progress(source, context, patches, output, options, |_| {})
 }
 
 pub fn build_prepared_archive_with_progress<BS: Blockstore>(
     source: &BS,
     context: &SnapshotContext,
     patches: &[ActorPatch],
-    network_version: u32,
     output: &Path,
-    overwrite: bool,
+    options: ArchiveBuildOptions,
     mut progress: impl FnMut(ArchiveBuildProgress),
 ) -> Result<BuildSummary, ArchiveBuildError> {
-    if !(MIN_NETWORK_VERSION..=MAX_NETWORK_VERSION).contains(&network_version) {
-        return Err(ArchiveBuildError::UnsupportedNetworkVersion(network_version));
+    if !(MIN_NETWORK_VERSION..=MAX_NETWORK_VERSION).contains(&options.network_version) {
+        return Err(ArchiveBuildError::UnsupportedNetworkVersion(options.network_version));
     }
-    if !overwrite && output.exists() {
+    if !options.overwrite && output.exists() {
         return Err(ArchiveBuildError::OutputExists(output.to_path_buf()));
     }
     let parent = output
@@ -140,7 +141,7 @@ pub fn build_prepared_archive_with_progress<BS: Blockstore>(
     let metadata = PreparedStateMetadata::new(
         constructed.state_root,
         context,
-        network_version,
+        options.network_version,
         constructed.actor_manifest_data,
         constructed.external_actor_codes.iter().copied().collect(),
         constructed.actors,
@@ -209,25 +210,41 @@ pub fn build_prepared_archive_with_progress<BS: Blockstore>(
     writer.finish().map_err(|error| ArchiveBuildError::Writer(error.to_string()))?;
 
     progress(ArchiveBuildProgress {
-        stage: ArchiveBuildStage::Verifying,
+        stage: ArchiveBuildStage::Validating,
         blocks: 0,
         bytes: copied_bytes,
     });
     let archive = ForestCar::open(&temporary)
         .map_err(|error| ArchiveBuildError::Reopen(error.to_string()))?;
-    let (_, VerificationSummary { actors, reachable_blocks }) =
-        verify_prepared_archive_with_progress(&archive, archive.roots(), |blocks| {
-            progress(ArchiveBuildProgress {
-                stage: ArchiveBuildStage::Verifying,
-                blocks,
-                bytes: copied_bytes,
-            });
-        })
+    let validated = validate_prepared_archive(&archive, archive.roots())
         .map_err(|error| ArchiveBuildError::Verify(error.to_string()))?;
-    if reachable_blocks != copied {
-        return Err(ArchiveBuildError::Verify(format!(
-            "wrote {copied} reachable blocks but reopened {reachable_blocks}"
-        )));
+    let actors = validated.actors.len();
+
+    if options.verify_output {
+        progress(ArchiveBuildProgress {
+            stage: ArchiveBuildStage::Verifying,
+            blocks: 0,
+            bytes: copied_bytes,
+        });
+        let (_, VerificationSummary { actors: verified_actors, reachable_blocks }) =
+            verify_prepared_archive_with_progress(&archive, archive.roots(), |blocks| {
+                progress(ArchiveBuildProgress {
+                    stage: ArchiveBuildStage::Verifying,
+                    blocks,
+                    bytes: copied_bytes,
+                });
+            })
+            .map_err(|error| ArchiveBuildError::Verify(error.to_string()))?;
+        if verified_actors != actors {
+            return Err(ArchiveBuildError::Verify(format!(
+                "validated {actors} actors but full verification found {verified_actors}"
+            )));
+        }
+        if reachable_blocks != copied {
+            return Err(ArchiveBuildError::Verify(format!(
+                "wrote {copied} reachable blocks but reopened {reachable_blocks}"
+            )));
+        }
     }
 
     progress(ArchiveBuildProgress {
@@ -235,8 +252,11 @@ pub fn build_prepared_archive_with_progress<BS: Blockstore>(
         blocks: copied_blocks,
         bytes: copied_bytes,
     });
-    let persist =
-        if overwrite { temporary.persist(output) } else { temporary.persist_noclobber(output) };
+    let persist = if options.overwrite {
+        temporary.persist(output)
+    } else {
+        temporary.persist_noclobber(output)
+    };
     persist.map_err(|error| ArchiveBuildError::Publish(error.error.to_string()))?;
     sync_parent(output).map_err(|error| ArchiveBuildError::Publish(error.to_string()))?;
 
@@ -245,6 +265,7 @@ pub fn build_prepared_archive_with_progress<BS: Blockstore>(
         state_root: constructed.state_root,
         actors,
         blocks: copied + 1,
+        reachable_dag_verified: options.verify_output,
     })
 }
 
@@ -340,7 +361,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("unsupported.press.car.zst");
 
-        let error = build_prepared_archive(&source, &context, &[], 20, &output, false).unwrap_err();
+        let error = build_prepared_archive(
+            &source,
+            &context,
+            &[],
+            &output,
+            ArchiveBuildOptions { network_version: 20, overwrite: false, verify_output: false },
+        )
+        .unwrap_err();
         assert!(matches!(error, ArchiveBuildError::UnsupportedNetworkVersion(20)));
         assert!(!output.exists());
     }
@@ -408,10 +436,9 @@ mod tests {
         let summary = build_prepared_archive_with_progress(
             source.as_ref(),
             &context,
-            &[patch],
-            28,
+            std::slice::from_ref(&patch),
             &output,
-            false,
+            ArchiveBuildOptions { network_version: 28, overwrite: false, verify_output: false },
             |update| progress.push(update.stage),
         )
         .unwrap();
@@ -422,11 +449,36 @@ mod tests {
                 ArchiveBuildStage::Writing,
                 ArchiveBuildStage::Writing,
                 ArchiveBuildStage::Indexing,
+                ArchiveBuildStage::Validating,
+                ArchiveBuildStage::Publishing,
+            ]
+        );
+        assert!(!summary.reachable_dag_verified);
+        let verified_output = directory.path().join("verified.press.car.zst");
+        let mut verified_progress = Vec::new();
+        let verified_summary = build_prepared_archive_with_progress(
+            source.as_ref(),
+            &context,
+            std::slice::from_ref(&patch),
+            &verified_output,
+            ArchiveBuildOptions { network_version: 28, overwrite: false, verify_output: true },
+            |update| verified_progress.push(update.stage),
+        )
+        .unwrap();
+        assert_eq!(
+            verified_progress,
+            [
+                ArchiveBuildStage::Constructing,
+                ArchiveBuildStage::Writing,
+                ArchiveBuildStage::Writing,
+                ArchiveBuildStage::Indexing,
+                ArchiveBuildStage::Validating,
                 ArchiveBuildStage::Verifying,
                 ArchiveBuildStage::Verifying,
                 ArchiveBuildStage::Publishing,
             ]
         );
+        assert!(verified_summary.reachable_dag_verified);
         drop(tree);
         drop(source);
 

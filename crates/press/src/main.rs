@@ -10,7 +10,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use fvm_anvil_state::{
     archive::{
-        ArchiveBuildProgress, ArchiveBuildStage, BuildSummary, build_prepared_archive_with_progress,
+        ArchiveBuildOptions, ArchiveBuildProgress, ArchiveBuildStage, BuildSummary,
+        build_prepared_archive_with_progress,
     },
     forest_car::ForestCar,
     prepared::{PreparedStateMetadata, load_prepared_metadata},
@@ -51,6 +52,9 @@ enum Command {
         /// Replace an existing output archive.
         #[arg(long)]
         force: bool,
+        /// Read every reachable block back through the completed archive's index.
+        #[arg(long)]
+        verify: bool,
     },
 }
 
@@ -67,8 +71,8 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Inspect { snapshot } => inspect(&snapshot),
-        Command::Build { snapshot, recipe, output, network_version, force } => {
-            build(&snapshot, &recipe, &output, network_version, force)
+        Command::Build { snapshot, recipe, output, network_version, force, verify } => {
+            build(&snapshot, &recipe, &output, network_version, force, verify)
         }
     }
 }
@@ -100,6 +104,7 @@ fn build(
     output: &Path,
     network_version: u32,
     force: bool,
+    verify: bool,
 ) -> Result<()> {
     if paths_refer_to_same_file(snapshot, output)? {
         bail!("source snapshot and output archive must be different files");
@@ -115,9 +120,8 @@ fn build(
         &source,
         &context,
         &patches,
-        network_version,
         output,
-        force,
+        ArchiveBuildOptions { network_version, overwrite: force, verify_output: verify },
         |progress| report_build_progress(progress, started.elapsed()),
     )
     .with_context(|| format!("failed to build prepared archive {}", output.display()))?;
@@ -139,6 +143,7 @@ fn report_build_progress(progress: ArchiveBuildProgress, elapsed: Duration) {
         ArchiveBuildStage::Indexing => {
             format!("indexing {} written blocks", progress.blocks)
         }
+        ArchiveBuildStage::Validating => "validating completed archive structure".to_owned(),
         ArchiveBuildStage::Verifying if progress.blocks == 0 => {
             "verifying completed archive".to_owned()
         }
@@ -190,12 +195,13 @@ fn paths_refer_to_same_file(source: &Path, output: &Path) -> Result<bool> {
 
 fn format_build_summary(output: &Path, summary: &BuildSummary) -> String {
     format!(
-        "Archive: {}\nMetadata root: {}\nPrepared state root: {}\nActors: {}\nBlocks: {}\n",
+        "Archive: {}\nMetadata root: {}\nPrepared state root: {}\nActors: {}\nBlocks: {}\nReachable DAG verified: {}\n",
         output.display(),
         summary.metadata_root,
         summary.state_root,
         summary.actors,
         summary.blocks,
+        if summary.reachable_dag_verified { "yes" } else { "no" },
     )
 }
 
@@ -347,9 +353,11 @@ mod tests {
             "--network-version",
             "28",
             "--force",
+            "--verify",
         ])
         .unwrap();
-        let Command::Build { snapshot, recipe, output, network_version, force } = cli.command
+        let Command::Build { snapshot, recipe, output, network_version, force, verify } =
+            cli.command
         else {
             panic!("expected build command");
         };
@@ -358,6 +366,23 @@ mod tests {
         assert_eq!(output.to_string_lossy(), "prepared.car");
         assert_eq!(network_version, 28);
         assert!(force);
+        assert!(verify);
+
+        let cli = Cli::try_parse_from([
+            "press",
+            "build",
+            "--snapshot",
+            "source.car",
+            "--recipe",
+            "recipe.json",
+            "--output",
+            "prepared.car",
+        ])
+        .unwrap();
+        let Command::Build { verify, .. } = cli.command else {
+            panic!("expected build command");
+        };
+        assert!(!verify);
     }
 
     #[test]
