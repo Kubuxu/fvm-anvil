@@ -5,6 +5,10 @@
 //! Apache-2.0 OR MIT). This module deliberately retains only the reader needed
 //! for lookup: index slots stay on disk and block frames are decoded on demand.
 
+pub mod writer;
+
+pub use writer::{ForestCarWriter, ForestCarWriterError};
+
 use std::{
     fs::File,
     io::{self, Read},

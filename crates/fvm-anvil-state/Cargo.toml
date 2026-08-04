@@ -11,12 +11,17 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 cid.workspace = true
+fvm.workspace = true
 fvm_ipld_blockstore.workspace = true
 fvm_ipld_car.workspace = true
 fvm_ipld_encoding.workspace = true
+fvm_ipld_hamt.workspace = true
 fvm_shared.workspace = true
+hex.workspace = true
+multihash-codetable.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]

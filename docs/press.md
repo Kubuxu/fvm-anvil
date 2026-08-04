@@ -3,10 +3,12 @@
 Status: active  
 Last updated: 2026-08-04
 
-Current implementation: the initial inspection slice is complete. `press inspect` opens an indexed
-ForestCAR directly, reads the FRC-0108 head execution context, and has been exercised against the
-85.9 GB mainnet snapshot at epoch 6,251,280. Streaming ForestCAR output and prepared-state metadata
-remain in the next storage stage.
+Current implementation: storage and standalone actor extraction are complete. `press build` resolves
+recipe addresses, preserves actor IDs and all their source Init aliases, rebuilds a V5 state tree,
+copies complete actor state DAGs and available code blocks, writes indexed ForestCAR, and reopens the
+result for structural verification. The workflow has extracted mainnet WFIL at epoch 6,251,280 into
+an independently readable 798,060-byte archive containing 454 blocks. Contract state patches remain
+the next stage.
 
 ## Purpose
 
@@ -92,33 +94,25 @@ press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
 press inspect OUTPUT
 ```
 
-A recipe identifies actors by stable user-facing addresses and describes only requested
-transformations:
+The current extraction recipe identifies actors by stable user-facing addresses:
 
 ```json
 {
   "version": 1,
   "actors": [
-    {
-      "address": "0xTarget",
-      "code": { "replace": "0x6000" },
-      "storage": {
-        "0xSlot": "0xValue"
-      }
-    },
-    {
-      "address": "0xDependency"
-    }
+    { "address": "0xTarget" },
+    { "address": "0xDependency" }
   ]
 }
 ```
 
-Addresses are required by default. A build fails clearly if a requested address does not exist or is
-not an EVM actor when an EVM-specific patch is requested. The output metadata records the resolved
-actor IDs and source state CIDs for inspection and provenance.
+Stage 3 extends the same actor entries with explicit `code`, `storage`, `balance`, and `sequence`
+patches. The Stage 2 binary rejects those fields rather than silently ignoring an unimplemented
+transformation.
 
-`press inspect` reports the selected execution context and, when requested, actor ID, code CID, state
-CID, balance, sequence, delegated address, EVM bytecode CID and hash, and EVM storage root.
+Addresses are required by default. A build fails clearly if a requested address does not exist. The
+output metadata records resolved actor IDs, requested addresses, source state CIDs, prepared state
+CIDs, code CIDs, the source execution context, and manifest data for inspection and provenance.
 
 ## Building the custom state tree
 
@@ -140,9 +134,10 @@ normal absent-actor behavior in the prepared state.
 
 ### Init state
 
-Copying the complete mainnet Init address map would retain mappings for every omitted actor. `press`
-instead builds a new address HAMT containing the delegated or robust address mappings needed by the
-included actors.
+The rebuilt address HAMT retains every source Init address-map entry whose value is an included actor
+ID. This preserves both robust and delegated aliases even when the recipe selected the actor by ID
+or by only one alias. `press` scans the source Init HAMT cachelessly to find those reverse mappings;
+the scan reads the whole map but does not retain it in memory.
 
 It preserves:
 
@@ -156,14 +151,14 @@ entries.
 
 ### Actor state
 
-For each selected actor, `press` copies its `ActorState` and the complete IPLD DAG rooted at the
-actor's state CID. For an EVM actor this includes runtime bytecode and the complete storage KAMT.
-Builtin actor code CIDs and manifest data are external actor-bundle dependencies: the exporter
-records them but does not require the source snapshot to contain their blocks.
+For each selected actor, `press` copies its `ActorState`, the complete IPLD DAG rooted at its state
+CID, and its code block when that block is present in the source snapshot. For an EVM actor the state
+DAG includes runtime bytecode and the complete storage KAMT. Code blocks absent from the snapshot
+and the System actor's manifest data CID are recorded as external actor-bundle dependencies.
 
-The exporter traverses only the new state tree and selected actor states, stopping at those external
-actor-bundle links. It streams blocks to the output and uses a disk-backed visited-CID set so memory
-use does not scale with the number of copied blocks.
+The exporter traverses only the new state tree and selected actor DAGs, stopping at authenticated
+external links. It streams blocks to the output and uses a disk-backed visited-CID set so memory use
+does not scale with the number of copied blocks.
 
 Removing unrelated actors, chain history, messages, receipts, and unrelated state can reduce the
 snapshot substantially. If a selected actor's own storage dominates the source snapshot, a faithful
@@ -247,17 +242,17 @@ formats and deterministic offline transformations.
 
 ## Implementation plan
 
-### Stage 1: indexed snapshot storage
+### Stage 1: indexed snapshot storage — delivered
 
 1. Adapt ForestCAR indexed reading, frame decompression, bounded caching, and streaming writing.
 2. Expose it through `fvm_ipld_blockstore::Blockstore` without Forest production dependencies.
 3. Add prepared-state metadata encoding and decoding.
 4. Add small multi-frame fixtures that prove random lookup does not ingest the archive wholesale.
 
-Gate: `press inspect` opens a Forest snapshot, reports its head execution context, and reads a chosen
-actor through indexed block access.
+Gate: `press inspect` opens a Forest snapshot and reports its head execution context; `press build`
+reads chosen actors through indexed block access without ingesting the source archive.
 
-### Stage 2: custom state construction
+### Stage 2: custom state construction — delivered
 
 1. Resolve recipe addresses against the source Init actor.
 2. Preserve selected actor IDs and records.
@@ -269,7 +264,7 @@ actor through indexed block access.
 Gate: the prepared archive opens without the source snapshot, its state tree loads, included
 addresses resolve to their original actor IDs, and unrelated actors are absent.
 
-### Stage 3: contract patches
+### Stage 3: contract patches — planned
 
 1. Add the versioned v18 EVM state adapter needed for serialization and mutation.
 2. Replace existing contract runtime bytecode while preserving storage and EVM nonce.

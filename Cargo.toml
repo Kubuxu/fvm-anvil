@@ -45,6 +45,7 @@ fvm = { version = "~4.8.2", default-features = false, features = ["testing", "ve
 fvm_ipld_blockstore = "0.3.2"
 fvm_ipld_car = "0.9.1"
 fvm_ipld_encoding = "0.5.4"
+fvm_ipld_hamt = "0.10.6"
 fvm_ipld_kamt = "0.4.6"
 fvm_shared = "~4.8.2"
 
