@@ -17,6 +17,29 @@ The source trees under `extern/` are read-only upstream references:
 
 Never edit files under `extern/`. Adapt narrowly scoped upstream code into this workspace with attribution where required.
 
+## Core model and source authority
+
+- Treat the node as a deterministic Filecoin message-execution harness with an Ethereum-compatible
+  boundary, not as an Ethereum state database with a different EVM. FVM actor state, IPLD roots,
+  and FVM gas accounting are authoritative; Ethereum blocks, receipts, and state views are
+  compatibility projections.
+- No upstream defines the whole operation. Foundry owns Anvil wire and lifecycle behavior; Forest
+  owns Ethereum-to-Filecoin RPC semantics; `ref-fvm` owns execution, roots, and gas; builtin actors
+  own method and state-schema behavior. Resolve each question against the source for that layer
+  rather than copying one upstream end to end.
+- Preserve both transaction truths. The original EIP-2718 envelope is authoritative for signer,
+  chain ID, and Ethereum hash; the exact serialized Filecoin `SignedMessage` is authoritative for
+  execution and inclusion gas. Conversion must not discard or later reconstruct either form.
+- Publish an FVM root, synthetic block, and all transaction/receipt/log/gas indexes as one canonical
+  transition. Calls and estimation may write unreachable content-addressed blocks, but must never
+  adopt their roots. Snapshots restore chain-visible state, not process controls; a runtime mining
+  control must take ownership from the startup interval scheduler.
+- Treat network version, actor bundle, and genesis state schema as one compatibility unit. A valid
+  CAR root and manifest do not prove state-schema compatibility; change and test these inputs
+  together.
+- Prove direct actor-state controls through the resulting public EVM behavior. Correct-looking
+  HAMT/KAMT/storage bytes are insufficient if actor invariants or contract-visible behavior differ.
+
 ## Commands
 
 ```bash
@@ -47,15 +70,10 @@ Keep these established system constraints:
 - Execute contracts with `ref-fvm`, never `revm`.
 - Keep JSON-RPC parsing separate from mutable FVM execution state.
 - Ensure one clear owner for the engine pool, blockstore, current root, synthetic chain, pool, and snapshots.
-- Do not publish state roots produced by calls or gas estimation.
-- Reuse the FVM engine pool and reconstruct machines from the selected root and block context.
 - Eagerly compile only the EAM, EthAccount, EVM, and Placeholder actors used by Ethereum
   transactions. Keep `fvm`'s `testing` feature enabled solely to prevent `DefaultExecutor` from
   preloading the complete builtin manifest. That feature grants actor ID 98 a test-only
   create-actor permission, so actor ID 98 must remain absent from every reachable state.
-- Validate Ethereum signatures and chain IDs from the original transaction envelope.
-- Calculate inclusion gas from the exact serialized Filecoin `SignedMessage`.
-- Preserve actor-state and IPLD invariants when adding direct state controls.
 - Return a clear unsupported error when FEVM cannot provide an Anvil behavior; never fake success.
 - Verify the pinned official actor bundle root and required manifest entries before caching or
   executing it. Cache official downloads under the CLI-selected XDG/home cache path with the
