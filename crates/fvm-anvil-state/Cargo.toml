@@ -1,0 +1,26 @@
+[package]
+name = "fvm-anvil-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cid.workspace = true
+fvm_ipld_blockstore.workspace = true
+fvm_ipld_car.workspace = true
+fvm_ipld_encoding.workspace = true
+fvm_shared.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

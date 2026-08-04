@@ -1,7 +1,12 @@
 # Press state preparation
 
-Status: planned  
+Status: active  
 Last updated: 2026-08-04
+
+Current implementation: the initial inspection slice is complete. `press inspect` opens an indexed
+ForestCAR directly, reads the FRC-0108 head execution context, and has been exercised against the
+85.9 GB mainnet snapshot at epoch 6,251,280. Streaming ForestCAR output and prepared-state metadata
+remain in the next storage stage.
 
 ## Purpose
 

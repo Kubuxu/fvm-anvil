@@ -1,9 +1,11 @@
 [workspace]
 members = [
     "crates/fvm-anvil",
+    "crates/fvm-anvil-state",
     "crates/fvm-anvil-eth",
     "crates/fvm-anvil-node",
     "crates/fvm-anvil-rpc",
+    "crates/press",
 ]
 resolver = "3"
 
@@ -23,6 +25,7 @@ strip = "none"
 
 [workspace.dependencies]
 fvm-anvil-eth = { path = "crates/fvm-anvil-eth" }
+fvm-anvil-state = { path = "crates/fvm-anvil-state" }
 fvm-anvil-node = { path = "crates/fvm-anvil-node" }
 fvm-anvil-rpc = { path = "crates/fvm-anvil-rpc" }
 
@@ -58,11 +61,13 @@ rand_08 = { package = "rand", version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
+tempfile = "3.23"
 tokio = { version = "1.48", features = ["macros", "net", "rt", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2.5"
 ureq = { version = "=3.1.2", default-features = false, features = ["rustls"] }
+zstd = "0.13"
 
 [workspace.lints.rust]
 rust_2018_idioms = { level = "deny", priority = -1 }
