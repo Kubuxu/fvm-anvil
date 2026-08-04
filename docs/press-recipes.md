@@ -204,6 +204,53 @@ RPC proof observed:
 Both owner transactions succeeded. The second transaction emitted `Upgraded`, cleared
 `nextUpgrade`, and produced a `filecoin_getGasBreakdown` result.
 
+### PDPVerifier add-pieces gas benchmark
+
+`benchmarks/pdp-verifier/run.py` benchmarks the imported v3.4.0 implementation against the
+storage-optimized implementation at PDP revision
+`391936ea0570b19eb7b92955f0ace317fdafa661` (`v3.4.0-23-g391936e`). Start the prepared node, then
+run the benchmark:
+
+```console
+$ target/release/fvm-anvil \
+    --state snapshots/pdp-verifier-mainnet-v3.4.0.press.car.zst \
+    --port 18546
+$ benchmarks/pdp-verifier/run.py
+```
+
+Each variant starts from the same imported-state snapshot and creates data set 1,443 with no
+listener. It sequentially adds batches of 1, 2, 4, 16, and 32 deterministic CommPv2 pieces, fills
+the data set to exactly 5,000 pieces in batches of 16, then repeats the five measured batches. The
+second variant deploys the local implementation with reinitializer version 4 and challenge finality
+150, announces it, advances the epoch, and calls `upgradeToAndCall` with `migrate()`. Both data sets
+finish with 5,055 pieces.
+
+The benchmark records every measured transaction receipt, complete `filecoin_getGasTrace`, and
+charge-name aggregate in
+`benchmarks/pdp-verifier/results/pdp-add-pieces-gas-traces.json`. All 20 measured transactions and
+620 fill transactions succeeded.
+
+| Starting pieces | Batch | Deployed gas | Optimized gas | Change |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 1 | 174,804,468 | 103,427,766 | -40.8% |
+| 1 | 2 | 274,396,633 | 107,981,119 | -60.6% |
+| 3 | 4 | 467,703,099 | 115,512,520 | -75.3% |
+| 7 | 16 | 1,380,851,109 | 156,713,998 | -88.7% |
+| 23 | 32 | 2,599,489,786 | 210,682,378 | -91.9% |
+| 5,000 | 1 | 174,047,378 | 115,081,164 | -33.9% |
+| 5,001 | 2 | 265,841,318 | 118,833,270 | -55.3% |
+| 5,003 | 4 | 462,398,923 | 126,207,859 | -72.7% |
+| 5,007 | 16 | 1,446,052,854 | 168,536,029 | -88.3% |
+| 5,023 | 32 | 2,602,930,372 | 220,412,079 | -91.5% |
+
+The runner fixes `maxFeePerGas` at 1,519,163 attoFIL and `maxPriorityFeePerGas` at 1 attoFIL.
+This prevents client fee heuristics from affecting an execution-gas benchmark. During development,
+receipt `effectiveGasPrice` incorrectly projected total Filecoin charges per used gas and exceeded
+the submitted EIP-1559 fee cap. Foundry fed that value back into later priority fees, producing
+spurious enormous balance requirements. Receipts now use the bounded EIP-1559 effective price;
+exact Filecoin burns, refunds, tips, and penalties remain available from the Filecoin-specific
+endpoints.
+
 ## Performance note
 
 A profile of the 454-block WFIL extraction showed repeated decompression of the same ForestCAR frame

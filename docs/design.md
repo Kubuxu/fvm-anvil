@@ -217,7 +217,9 @@ Ethereum RPC gas quantities deliberately represent Filecoin gas:
 - Transaction gas is the Filecoin message gas limit.
 - Receipt `gasUsed` is the FVM message receipt gas used.
 - Cumulative gas is accumulated across messages in the synthetic block.
-- Effective gas price is derived from Filecoin fee outputs.
+- Receipt `effectiveGasPrice` follows EIP-1559:
+  `min(maxFeePerGas, baseFeePerGas + maxPriorityFeePerGas)`. Exact Filecoin fee outputs remain
+  available through `filecoin_getGasBreakdown`.
 - Gas estimation executes against FVM and searches for a successful Filecoin gas limit.
 
 FEVM contract context also follows Filecoin behavior:

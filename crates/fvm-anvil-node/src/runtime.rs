@@ -936,7 +936,11 @@ impl NodeRuntime {
 
             let gas = filecoin_gas_breakdown(apply)?;
             let trace = filecoin_gas_trace(apply);
-            let effective_gas_price = effective_gas_price(&gas, apply.msg_receipt.gas_used)?;
+            let effective_gas_price = effective_gas_price(
+                pending.bridged.max_fee_per_gas(),
+                pending.bridged.max_priority_fee_per_gas(),
+                self.base_fee_per_gas,
+            );
             transaction.effective_gas_price = Some(effective_gas_price);
             let receipt = TransactionReceipt {
                 transaction_hash: transaction.hash,
@@ -1386,16 +1390,13 @@ fn finish_trace_call(stack: &mut Vec<FilecoinCallTrace>, calls: &mut Vec<Filecoi
     }
 }
 
-fn effective_gas_price(gas: &FilecoinGasBreakdown, gas_used: u64) -> Result<U256, NodeError> {
-    if gas_used == 0 {
-        return Ok(U256::ZERO);
-    }
-    let charged = gas
-        .base_fee_burn
-        .checked_add(gas.over_estimation_burn)
-        .and_then(|total| total.checked_add(gas.miner_tip))
-        .ok_or_else(|| NodeError::GasAccounting("fee charge sum exceeds U256".to_owned()))?;
-    Ok(charged / U256::from(gas_used))
+fn effective_gas_price(
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+    base_fee_per_gas: u128,
+) -> U256 {
+    U256::from(max_fee_per_gas)
+        .min(U256::from(base_fee_per_gas) + U256::from(max_priority_fee_per_gas))
 }
 
 fn execution_kind(recipient: Option<EthAddress>) -> ExecutionKind {
@@ -1505,7 +1506,7 @@ mod tests {
         StateHashAlgorithmV18, effective_gas_price, log_matches_filter,
     };
     use crate::error::NodeError;
-    use crate::types::{FilecoinGasBreakdown, Log, LogFilter};
+    use crate::types::{Log, LogFilter};
 
     #[test]
     fn v18_word_adapter_uses_minimal_serde_full_width_hash_and_exact_kamt_config() {
@@ -1537,19 +1538,10 @@ mod tests {
     }
 
     #[test]
-    fn effective_price_charges_base_overestimation_and_tip() {
-        let gas = FilecoinGasBreakdown {
-            base_fee_burn: U256::from(100_u64),
-            over_estimation_burn: U256::from(20_u64),
-            miner_penalty: U256::ZERO,
-            miner_tip: U256::from(30_u64),
-            refund: U256::ZERO,
-            gas_refund: 0,
-            gas_burned: 0,
-        };
-
-        assert_eq!(effective_gas_price(&gas, 10).unwrap(), U256::from(15_u64));
-        assert_eq!(effective_gas_price(&gas, 0).unwrap(), U256::ZERO);
+    fn effective_price_uses_eip_1559_cap_and_priority() {
+        assert_eq!(effective_gas_price(200, 10, 100), U256::from(110_u64));
+        assert_eq!(effective_gas_price(105, 10, 100), U256::from(105_u64));
+        assert_eq!(effective_gas_price(u128::MAX, u128::MAX, u128::MAX), U256::from(u128::MAX));
     }
 
     #[test]

@@ -498,13 +498,16 @@ mod tests {
             handle.transaction_count(PREFUNDED_ETH_ADDRESS, BlockSelector::Latest).await.unwrap(),
             1
         );
-        let gas = handle.filecoin_gas_breakdown(hash).await.unwrap().unwrap();
+        assert!(handle.filecoin_gas_breakdown(hash).await.unwrap().is_some());
         assert_eq!(block.logs, receipt.logs);
         assert_eq!(block.transactions[0].effective_gas_price, Some(receipt.effective_gas_price));
+        let transaction = &block.transactions[0];
         assert_eq!(
             receipt.effective_gas_price,
-            (gas.base_fee_burn + gas.over_estimation_burn + gas.miner_tip)
-                / U256::from(receipt.gas_used)
+            U256::from(transaction.max_fee_per_gas).min(
+                U256::from(block.base_fee_per_gas)
+                    + U256::from(transaction.max_priority_fee_per_gas)
+            )
         );
         let trace = handle.filecoin_gas_trace(hash).await.unwrap().unwrap();
         assert_eq!(trace.gas_used, receipt.gas_used);

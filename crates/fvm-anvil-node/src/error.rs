@@ -67,8 +67,6 @@ pub enum NodeError {
     Runtime(String),
     #[error("FVM execution failed: {0}")]
     Execution(String),
-    #[error("invalid FVM gas accounting: {0}")]
-    GasAccounting(String),
     #[error("transaction {0} is already known")]
     DuplicateTransaction(B256),
     #[error("transaction nonce {actual} is stale; expected {expected}")]
