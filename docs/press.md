@@ -1,17 +1,15 @@
 # Press state preparation
 
 Status: active  
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
-Current implementation: storage, standalone actor extraction, contract patches, and node import are
-complete. `press build` resolves recipe addresses, preserves actor IDs and source Init aliases,
-rebuilds a V5 state tree, applies v18 EVM runtime-code and storage changes, writes indexed
+`press build` resolves recipe addresses, preserves actor IDs and source Init aliases, rebuilds a V5
+state tree, applies builtin-actors v18 EVM runtime-code and storage changes, writes indexed
 ForestCAR, and reopens the result for structural validation. Passing `--verify` additionally reads
-every reachable block back through the completed archive's index. `fvm-anvil --state
-<PRESS_ARCHIVE>` mounts that output as a read-only base, validates its NV28/v18 execution context,
-and funds development callers in a writable overlay. The workflow imported patched mainnet WFIL at
-epoch 6,251,280, executed a transaction, returned its receipt and FVM gas breakdown, and retained
-separate prepared and current roots.
+every reachable block back through the completed archive's index.
+
+`fvm-anvil --state <PRESS_ARCHIVE>` mounts the output as a read-only base, validates its NV28/v18
+execution context, and funds development callers in a writable in-memory overlay.
 
 ## Purpose
 
@@ -37,15 +35,14 @@ The output no longer depends on the source snapshot. It still uses the actor bun
 
 ## Scope decisions
 
-The initial implementation follows these decisions:
+The implementation follows these decisions:
 
 - Recipes describe reusable actor selections and transformations. They do not pin an expected input
   state root or snapshot CID.
 - Output provenance records the source head and state root actually used, without making them recipe
   preconditions.
-- The main workflow copies selected state into a new snapshot. Copy-on-write overlays are possible
-  later but are not the initial product.
-- Workload-specific read witnesses are deferred.
+- The workflow copies selected state into a new snapshot. Copy-on-write overlays and
+  workload-specific read witnesses are not implemented.
 - `press` does not create or fund development callers. `fvm-anvil` applies those local changes after
   opening the prepared state.
 - Selected actors are copied with their complete internal state by default. Selective or observed
@@ -70,7 +67,7 @@ A prepared output uses a distinct `.press.car.zst` suffix to prevent it from bei
 consensus chain snapshot. Its CAR root is a versioned metadata block rather than a Filecoin tipset:
 
 ```text
-PressStateMetadataV2
+PreparedStateMetadata (format version 2)
     prepared state root and source execution context
     network version and actor manifest data
     external actor code dependencies
@@ -88,7 +85,8 @@ The source snapshot is an invocation input so the same recipe can be rerun again
 
 ```text
 press inspect SNAPSHOT
-press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT [--verify]
+press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
+  [--network-version 28] [--force] [--verify]
 press inspect OUTPUT
 ```
 
@@ -96,7 +94,7 @@ Every build reopens the completed archive and validates its metadata, compact st
 records, requested aliases, patches, and manifest linkage before atomic publication. `--verify`
 additionally traverses every reachable actor-state block through the generated ForestCAR index. That
 full readback audit is useful for distributed artifacts but is disabled by default because the
-initial export traversal has already read and copied the complete selected DAG.
+build's export traversal has already read and copied the complete selected DAG.
 
 The reusable source-pinning, dependency-discovery, proxy-patch, and runtime-proof workflow is
 recorded in [`press-recipes.md`](press-recipes.md).
@@ -109,7 +107,7 @@ transformations:
   "version": 1,
   "actors": [
     {
-      "address": "0xTarget",
+      "address": "0x1111111111111111111111111111111111111111",
       "code": { "replace": "0x60006000f3" },
       "storage": {
         "0x0000000000000000000000000000000000000000000000000000000000000001":
@@ -118,7 +116,7 @@ transformations:
       "balance": "1000000000000000000",
       "sequence": 7
     },
-    { "address": "0xDependency" }
+    { "address": "0x2222222222222222222222222222222222222222" }
   ]
 }
 ```
@@ -201,9 +199,9 @@ Structural verification reloads the completed archive, checks final actor record
 replacement bytecode hashes, and reads every patched storage slot back from the emitted KAMT. All
 changes are committed into the new outer state root before publication.
 
-The initial implementation does not synthesize a new EVM contract at an address that is absent from
-the source. That requires separate EAM and actor-invariant work and is not needed for replacing code
-on an imported mainnet contract.
+Press does not synthesize a new EVM contract at an address that is absent from the source. That
+requires separate EAM and actor-invariant work and is not needed for replacing code on an imported
+contract.
 
 ## Responsibility split
 
@@ -270,73 +268,17 @@ Both binaries use the same prepared-state metadata and ForestCAR blockstore impl
 `fvm-anvil-node` remains the sole owner of live chain state; the shared state crate owns only storage
 formats and deterministic offline transformations.
 
-## Implementation plan
+## Current limitations
 
-### Stage 1: indexed snapshot storage — delivered
+- The node's writable overlay and adopted root are not persisted across restarts.
+- Recipes must name dynamic EVM callees explicitly; Press does not infer a complete call graph.
+- Selected actors retain their complete state DAG. Workload witnesses and observed-storage pruning
+  are not implemented.
+- Press does not create an EVM actor at an address absent from the source snapshot.
+- Prepared archives do not contain consensus-valid synthetic tipsets, historical messages,
+  receipts, or Ethereum projections.
+- General native-actor state rewriting is outside the supported patch surface.
 
-1. Adapt ForestCAR indexed reading, frame decompression, bounded caching, and streaming writing.
-2. Expose it through `fvm_ipld_blockstore::Blockstore` without Forest production dependencies.
-3. Add prepared-state metadata encoding and decoding.
-4. Add small multi-frame fixtures that prove random lookup does not ingest the archive wholesale.
-
-Gate: `press inspect` opens a Forest snapshot and reports its head execution context; `press build`
-reads chosen actors through indexed block access without ingesting the source archive.
-
-### Stage 2: custom state construction — delivered
-
-1. Resolve recipe addresses against the source Init actor.
-2. Preserve selected actor IDs and records.
-3. Copy the mandatory runtime actors into a new V5 state tree.
-4. Rebuild the Init address map for included actors while preserving source `next_id`.
-5. Flush the new state root.
-6. Traverse the new tree and complete selected actor-state DAGs into `.press.car.zst`.
-
-Gate: the prepared archive opens without the source snapshot, its state tree loads, included
-addresses resolve to their original actor IDs, and unrelated actors are absent.
-
-### Stage 3: contract patches — delivered
-
-1. Add the versioned v18 EVM state adapter needed for serialization and mutation.
-2. Replace existing contract runtime bytecode while preserving storage and EVM nonce.
-3. Apply batched storage-slot changes with one KAMT and state-tree flush.
-4. Record resolved source actors and applied transformations in output metadata.
-5. Read patches back from the completed archive as part of `press build`.
-
-Gate: a prepared contract exposes the replacement bytecode and patched storage while an unpatched
-copy exposes the original values.
-
-### Stage 4: node import — delivered
-
-1. Add prepared-state input to genesis-time node configuration.
-2. Mount the prepared ForestCAR as a read-only base blockstore.
-3. Initialize the machine at the recorded root, epoch, timestamp, base fee, and network version.
-4. Add generated development accounts and funding in the node's writable overlay.
-5. Expose prepared and current state roots separately.
-6. Exercise the real endpoint against an imported and patched contract.
-
-Gate: the release binary started from the 796,291-byte patched WFIL archive, funded its development
-caller, exposed the patched bytecode and storage through Ethereum RPC, returned `0x` from the
-replacement runtime, adopted transaction `0x0fea736b4182e49c8e6375ebbf27658af575208b966cb30fa7d2acdda9c9f416`,
-and returned its successful receipt and Filecoin gas breakdown. The prepared root remained
-`bafy2bzaceb2mmtnzkpwzc4ncavi7sc4y5eoh43s6epr4skl3swzctghkeqnek` while the writable current root
-advanced.
-
-### Stage 5: persistence and broader preparation
-
-1. Persist the node's writable overlay and adopted root.
-2. Add prepared-state diff and richer inspection commands when they serve concrete workflows.
-3. Add new-actor synthesis only after EAM-created public behavior is specified and tested.
-4. Consider overlay outputs and workload witnesses separately after the standalone-copy workflow is
-proven.
-
-## Deferred work
-
-The initial plan deliberately defers:
-
-- workload read witnesses;
-- automatic dynamic call-graph discovery;
-- storage pruning based on observed execution;
-- consensus-valid synthetic Filecoin tipsets;
-- importing historical messages, receipts, or Ethereum projections;
-- general native-actor state rewriting;
-- creating a new EVM actor at an address absent from the source snapshot.
+Future persistence must keep the prepared ForestCAR immutable and publish the overlay plus adopted
+root atomically. New-actor synthesis requires EAM-created public behavior and actor invariants to be
+specified and tested first.

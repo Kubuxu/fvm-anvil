@@ -1,9 +1,9 @@
-# fvm-anvil design decisions and findings
+# fvm-anvil design and behavior
 
 Status: living design record  
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
-The active execution sequence and delegation gates are maintained in
+Current implementation status and remaining work are tracked in
 [`docs/implementation-plan.md`](implementation-plan.md).
 
 ## Purpose
@@ -16,13 +16,15 @@ The tool must make repeated contract deployment, execution, testing through RPC,
 
 ## Agreed scope
 
-Initial product scope:
+Product scope:
 
-- Ethereum JSON-RPC for `cast`, Alloy clients, contract deployment, calls, transactions, receipts, logs, and benchmarks.
+- Ethereum JSON-RPC for `cast`, Alloy clients, contract deployment, calls, transactions, receipts,
+  logs, and gas measurement.
 - Execution by `ref-fvm`, not `revm`.
-- Official builtin actor bundle by default, with an alternate bundle selectable during initialization.
+- Official builtin actor bundle by default, with an alternate v18 bundle selectable at startup.
 - Minimal Filecoin actor state needed for EAM/EVM execution and gas accounting.
-- Anvil-compatible transaction pooling, block production controls, time controls, snapshots, and reverts.
+- Anvil-compatible transaction pooling, block production, snapshots, reverts, and development
+  controls where FEVM can implement them honestly.
 - Filecoin-specific gas breakdown and trace endpoints in a separate namespace.
 
 Explicitly out of scope:
@@ -85,7 +87,7 @@ A dedicated worker thread with a 64 MiB stack owns all mutable execution state:
 - Transactions, receipts, logs, and gas traces.
 - Transaction pool.
 - Mining mode.
-- Snapshots and one-shot next-block overrides.
+- Snapshots.
 
 Async RPC handlers communicate with this worker through semantic commands. RPC parsing must not leak into the execution layer.
 
@@ -95,36 +97,44 @@ Startup eagerly compiles only the EAM, EthAccount, EVM, and placeholder actors u
 transaction path. Other bundle actors compile lazily if a future feature invokes them; compiling
 every v18 actor delays readiness without benefiting normal FEVM execution.
 `ref-fvm`'s `testing` feature disables `DefaultExecutor`'s unconditional full-manifest preload. It
-also grants actor ID 98 a test-only create-actor permission; this does not alter reachable node
-behavior because ID 98 is reserved and genesis starts allocating non-singleton actors at ID 100.
+also grants actor ID 98 a test-only create-actor permission. Default genesis starts allocation at ID
+100, and prepared-state construction and validation reject actor ID 98.
 
 
 Calls and gas estimation start from a selected historical root, execute without publishing the resulting root, and retain only their return value or diagnostic information. Content-addressed blocks written by discarded simulations are harmless because their roots are not adopted.
 
 ## Code and dependency boundaries
 
-Proposed workspace:
+The workspace has six crates:
 
 ```text
-crates/
-  fvm-anvil/          CLI and process startup
-  fvm-anvil-rpc/      JSON-RPC parsing, aliases, handlers, responses
-  fvm-anvil-node/     worker, pool, mining, history, snapshots
-  fvm-anvil-eth/      pure Ethereum-to-Filecoin bridge
+press                     offline snapshot selection, patching, and prepared archive output
+  └── fvm-anvil-state     ForestCAR and prepared-state formats
+
+fvm-anvil                 CLI, configuration, process lifetime, and graceful shutdown
+  ├── fvm-anvil-rpc       JSON-RPC parsing, handlers, responses, and transport
+  │     └── fvm-anvil-node
+  └── fvm-anvil-node      mutable execution and synthetic chain state
+        ├── fvm-anvil-eth Ethereum-to-Filecoin protocol bridge
+        └── fvm-anvil-state
 ```
 
 Dependency rules:
 
-- `fvm-anvil-rpc` depends on the node handle, Alloy RPC types, `anvil-server`, and `anvil-rpc`; it does not depend on FVM internals.
-- `fvm-anvil-eth` depends on Alloy plus `fvm_shared` and IPLD encoding; it is deterministic and testable without Wasmtime.
+- `fvm-anvil-rpc` depends on the node handle, Alloy RPC types, `anvil-server`, and `anvil-rpc`; it
+  does not depend on FVM internals.
+- `fvm-anvil-eth` depends on Alloy plus `fvm_shared` and IPLD encoding; it is deterministic and
+  testable without Wasmtime.
 - `fvm-anvil-node` is the only owner of mutable chain state and the `ref-fvm` runtime.
+- `fvm-anvil-state` owns the on-disk prepared-state and ForestCAR boundary shared by `press` and the
+  node; it does not own live execution.
 - No production crate depends on Forest, `anvil-core`, or the main `anvil` crate.
 
 ### Reuse directly
 
 From Foundry:
 
-- `extern/foundry/crates/anvil/server` for HTTP, WebSocket, optional IPC, batching, CORS, and generic RPC handler plumbing.
+- `extern/foundry/crates/anvil/server` for HTTP, batching, CORS, and generic RPC handler plumbing.
 - `extern/foundry/crates/anvil/rpc` for JSON-RPC requests, responses, and errors.
 - Alloy Ethereum transaction and RPC types.
 
@@ -174,7 +184,7 @@ The production runtime must not reuse the integration harness's custom kernel, `
 
 ## Minimal actor state
 
-The initial state tree contains:
+The empty-state genesis tree contains:
 
 | ID | State | Reason |
 | --- | --- | --- |
@@ -188,13 +198,14 @@ Development EOAs are prefunded f4 addresses in EAM namespace 10 backed by placeh
 
 The f02 sink is mechanically necessary even with native actor behavior parked: ordinary EIP-1559 transactions may have a nonzero premium, and `DefaultExecutor` deposits that miner tip into actor ID 2. Calls to f02 and real Reward actor semantics remain unsupported.
 
-Cron and all other native singleton actors are omitted initially.
+Cron and all other native singleton actors are omitted from empty-state genesis.
 
 ## Ethereum transaction bridge
 
-The bridge accepts the transaction formats supported by Filecoin's current Ethereum transaction rules, initially legacy/EIP-155 and EIP-1559 with the applicable network-version restrictions.
+The bridge accepts the transaction formats supported by Filecoin's current Ethereum transaction
+rules: legacy/EIP-155 and EIP-1559 with the applicable network-version restrictions.
 
-For every raw transaction it must:
+For every raw transaction it:
 
 1. Decode the original Ethereum envelope.
 2. Validate chain ID and signature.
@@ -249,255 +260,83 @@ canonical transaction execution; calls and gas-estimation simulations do not pay
 
 Opcode-level Geth/Foundry traces are unavailable because the builtin EVM interpreter does not currently expose opcode tracing. FVM execution and gas-charge traces remain available.
 
-## Anvil RPC compatibility
+## Implemented RPC compatibility
 
-The canonical snapshot methods are:
+The current standard Ethereum surface is:
 
-- `anvil_snapshot`, alias `evm_snapshot`.
-- `anvil_revert`, alias `evm_revert`.
+- `web3_clientVersion`, `net_version` (`eth_networkId`), `eth_chainId`, `eth_accounts`
+  (`eth_requestAccounts`), `eth_syncing`, `eth_mining`, and `eth_blockNumber`;
+- `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, and `eth_getStorageAt`;
+- `eth_call`, `eth_estimateGas`, and `eth_sendRawTransaction`;
+- `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getBlockByNumber`,
+  `eth_getBlockByHash`, and `eth_getLogs`;
+- `eth_gasPrice`, `eth_maxPriorityFeePerGas`, and `eth_feeHistory`.
 
-A revert consumes its snapshot ID. It restores the FVM root, synthetic head, epoch, timestamp, base fee, transaction/receipt/log indexes, and pending one-shot block overrides. Blocks and indexes newer than the snapshot are removed.
+The implemented Anvil controls are:
 
-The mining calls have distinct parameter and response contracts:
+- `anvil_snapshot` (`evm_snapshot`) and `anvil_revert` (`evm_revert`);
+- `anvil_mine` and `evm_mine`;
+- `anvil_setAutomine` (`evm_setAutomine`).
 
-- `anvil_mine` mines an optional number of blocks with an optional per-call timestamp interval.
-- `evm_mine` accepts its Ganache-compatible timestamp/options form, mines regardless of mode, and returns `"0x0"`.
-- `anvil_mine_detailed`, alias `evm_mine_detailed`, returns detailed block data.
+Methods outside this surface return JSON-RPC `method not found`; they must not report success without
+an FEVM implementation.
+
+A successful revert consumes the requested snapshot and every newer snapshot. It restores the FVM
+root, synthetic blocks, epoch, timestamp, transaction and receipt indexes, and Filecoin gas indexes.
+It retains pending transactions that remain valid against the restored state. Mining mode and the
+startup interval scheduler are process controls and are not part of a snapshot.
+
+`anvil_mine` accepts an optional block count and timestamp interval. `evm_mine` accepts its
+Ganache-compatible timestamp/options form, mines regardless of automine, and returns `"0x0"`.
 
 ### Block production modes
 
-Match Anvil's four modes:
+The CLI supports four startup modes:
 
 | Mode | Startup configuration | Behavior |
 | --- | --- | --- |
-| Instant | default | Mine when ready transactions arrive. |
+| Instant | default | Mine when a valid transaction arrives. |
 | Interval | `--block-time <seconds>` | Mine on the timer, including empty blocks. |
-| Mixed | `--block-time <seconds> --mixed-mining` | Mine on transaction arrival and timer. |
+| Mixed | `--block-time <seconds> --mixed-mining` | Mine on transaction arrival and on the timer. |
 | Manual | `--no-mining` | Keep transactions pending until explicitly mined. |
+
+Calling `anvil_setAutomine` or `evm_setAutomine` transfers control away from the startup interval
+scheduler. Enabling automine mines a pending block immediately and then mines on submission;
+disabling it leaves subsequent transactions pending.
 
 Startup diagnostics, the account banner, and private development keys are written to stderr so RPC
 process stdout remains clean. `--quiet` and its `--silent` alias suppress those diagnostics.
-`--config-out <file>` writes Anvil-compatible wallet and fee fields plus a `filecoin` object
-containing the network version, actor bundle version and root, prepared and current state roots, and
-startup mining mode. On Unix the file is created or reset to mode `0600` because it contains private
-keys.
+`--config-out <file>` writes wallet and fee fields plus a `filecoin` object containing the network
+version, actor bundle version and root, prepared and current state roots, and startup mining mode.
+On Unix the file is created or reset to mode `0600` because it contains private keys.
 
-Interval scheduling stops after any `anvil_setAutomine` or `evm_setAutomine` call; the runtime RPC
-transition then owns mining behavior. Mining mode and scheduler state are process controls and are
-not included in chain snapshots.
+FEVM fixes contract-visible `GASLIMIT` at 10 billion and `COINBASE` at zero. Controls that cannot
+honestly change contract-visible behavior must remain unsupported.
 
+## Remaining compatibility work
 
-Also support `--max-transactions` and `--order fees|fifo`.
+The current roadmap is maintained in [`docs/implementation-plan.md`](implementation-plan.md).
+Priorities include time controls, pool ordering and inspection, balance and nonce controls, and
+versioned direct EVM state controls. `anvil_setCode` and `anvil_setStorageAt` require a v18 actor-state
+adapter; ERC-20 balance and allowance helpers depend on those primitives and proof through public
+contract calls.
 
-Runtime transitions follow Anvil:
+WebSocket subscriptions, IPC, broader Anvil extensions, and general remote-chain forking remain
+deferred. State preparation with selected mainnet actors is provided by
+[`press`](press.md), but it is not consensus-history import or remote RPC forking.
 
-- `anvil_setAutomine(true)`, alias `evm_setAutomine`, replaces any mode with instant mode.
-- Setting automine false changes pure instant mode to manual and is a no-op in interval or mixed mode.
-- `anvil_setIntervalMining(n > 0)`, alias `evm_setIntervalMining`, replaces the current mode with interval mode.
-- Setting the interval to zero selects manual mode.
-- Runtime methods do not restore mixed mode.
-- `anvil_getAutomine` is true only in pure instant mode.
-- `anvil_getIntervalMining` reports only pure interval mode.
+## Acceptance runner
 
-## Near-term direct state mutation methods
-
-The following methods are required soon after the first end-to-end execution slice, not deferred indefinitely:
-
-- `anvil_setCode`
-- `anvil_setStorageAt`
-- `anvil_dealERC20`
-- `anvil_setERC20Allowance`
-
-They mutate the current development state without charging gas or mining a block, matching Anvil's development-control semantics. The mutations produce a new current FVM state root and participate in subsequent snapshots and blocks.
-
-### `anvil_setCode`
-
-An EVM actor state contains:
-
-- Raw bytecode CID.
-- Keccak-256 bytecode hash.
-- Contract storage KAMT root.
-- Transient state metadata.
-- EVM creation nonce.
-- Optional tombstone.
-
-Implementation requirements:
-
-1. Resolve the Ethereum address to an actor ID.
-2. If necessary, create or convert the address into an EVM actor while preserving its balance where meaningful.
-3. Store bytecode as an `IPLD_RAW` block addressed with Blake2b-256, matching the EVM actor.
-4. Compute and store the Keccak-256 bytecode hash.
-5. Preserve contract storage and EVM nonce for an existing live contract.
-6. Clear any tombstone so the installed code is observable and executable.
-7. Flush the actor state and state tree atomically.
-
-Open compatibility detail: Anvil permits development-time code injection, while normal FEVM deployment enforces maximum code size and EIP-3541. We must decide whether the control method deliberately bypasses those deployment checks or preserves FEVM invariants. This decision needs an explicit test either way.
-
-### `anvil_setStorageAt`
-
-Builtin actor v18 stores contract storage as `KAMT<U256, U256>` with the EVM actor's exact KAMT configuration. Setting zero deletes the key; a nonzero value inserts or replaces it.
-
-Implementation requirements:
-
-1. Resolve or create an empty-code EVM actor at the target Ethereum address.
-2. Load the actor's storage KAMT with the version-compatible configuration.
-3. Convert the RPC slot and 32-byte value as big-endian `U256` values.
-4. Delete zero values or set nonzero values.
-5. Flush the KAMT, update the actor state's `contract_state` CID, and flush the state tree atomically.
-6. Preserve bytecode, nonce, transient metadata, tombstone state, balance, and delegated address unless actor creation is required.
-
-This code must be isolated behind a versioned EVM state adapter because an arbitrary alternate actor bundle may use a different state schema or KAMT configuration.
-
-### `anvil_dealERC20`
-
-The method sets an absolute `balanceOf(address)` value by discovering the token's balance storage slot and then using `anvil_setStorageAt`.
-
-Current Anvil discovers candidate slots from an EVM access list and tests state overrides. FEVM does not currently expose logical EVM storage-read/access-list tracing, so the initial FVM implementation should use bounded storage-layout probing:
-
-1. ABI-encode `balanceOf(target)`.
-2. Try common Solidity and Vyper mapping layouts across a bounded range of base slots.
-3. For each candidate, create a temporary state root with that slot set to the requested balance.
-4. Execute `balanceOf` through `eth_call` against the temporary root.
-5. Select the candidate only when the returned ABI value equals the requested balance.
-6. Commit the discovered slot through `anvil_setStorageAt`.
-7. Call `balanceOf` again against committed state and verify the result.
-8. Cache the discovered layout keyed by token address and bytecode hash.
-
-Return an explicit `no slot found` error for nonstandard accounting or when the bounded probe cannot prove a candidate.
-
-### `anvil_setERC20Allowance`
-
-This follows the same proof-by-simulation strategy using `allowance(owner, spender)`. Candidate keys include common nested mapping layouts such as:
-
-```text
-keccak256(spender, keccak256(owner, base_slot))
-```
-
-and the relevant alternative ordering used by supported compiler layouts.
-
-The method must:
-
-1. ABI-encode `allowance(owner, spender)`.
-2. Probe bounded candidate nested-mapping layouts using temporary FVM roots.
-3. Accept a candidate only when the call returns the requested amount.
-4. Commit through `anvil_setStorageAt`.
-5. Verify the committed result through `allowance`.
-6. Cache the proven layout by token address and bytecode hash.
-
-Both ERC-20 methods depend on correct, cheap root-based simulation and direct storage mutation; they should be implemented immediately after `anvil_setStorageAt`.
-
-## Initial RPC surface
-
-The first compatibility tier should include enough standard Ethereum RPC for `cast`, Alloy, and `forge create`:
-
-- `web3_clientVersion`
-- `net_version`
-- `eth_chainId`
-- `eth_accounts`
-- `eth_syncing`
-- `eth_blockNumber`
-- `eth_getBlockByNumber`
-- `eth_getBlockByHash`
-- `eth_getBalance`
-- `eth_getTransactionCount`
-- `eth_getCode`
-- `eth_getStorageAt`
-- `eth_call`
-- `eth_estimateGas`
-- `eth_gasPrice`
-- `eth_maxPriorityFeePerGas`
-- `eth_feeHistory`
-- `eth_sendRawTransaction`
-- `eth_getTransactionByHash`
-- `eth_getTransactionReceipt`
-- `eth_getLogs`
-
-Anvil controls in the early surface:
-
-- Mining and time methods described above.
-- `anvil_snapshot` and `anvil_revert` with aliases.
-- `anvil_setBalance`, `anvil_addBalance`, and `anvil_setNonce`.
-- `anvil_setChainId`.
-- `anvil_setNextBlockBaseFeePerGas`.
-- `anvil_setNextBlockPrevRandao`.
-- `anvil_nodeInfo` and `anvil_metadata`.
-- Pool inspection and removal methods.
-
-FEVM fixes `GASLIMIT` at 10 billion and `COINBASE` at zero. `anvil_setBlockGasLimit` and `anvil_setCoinbase` cannot honestly affect contract-visible values and should return clear unsupported errors unless the actor behavior changes.
-
-## Implementation milestones
-
-### Milestone 1: end-to-end execution slice
-
-- Workspace and dependency boundaries.
-- Official v18 bundle loading at NV28.
-- Minimal actors including f02 and f099.
-- One prefunded standard Anvil f4 account.
-- EIP-1559 raw transaction conversion.
-- Dedicated FVM worker and reusable `EnginePool`.
-- Contract deployment through EAM.
-- Contract call and state-changing transaction through EVM.
-- Synthetic block, transaction, and receipt indexes.
-- Filecoin gas breakdown endpoint.
-- Instant and manual mining.
-- `anvil_snapshot` and `anvil_revert`.
-
-Acceptance is a black-box flow using `cast` or `forge create`: deploy a contract, call it, transact with it, inspect the receipt and FVM gas breakdown, snapshot, mutate, revert, and verify restored state.
-
-The first executable acceptance gate is `tests/acceptance/run.sh`. It is deliberately
-endpoint-agnostic and runs unchanged against upstream Anvil or fvm-anvil:
+`tests/acceptance/run.sh` exercises the public JSON-RPC boundary and can run unchanged against
+upstream Anvil or fvm-anvil:
 
 ```text
 RPC_URL=http://127.0.0.1:8545 tests/acceptance/run.sh
 ```
 
-The runner uses only public Foundry commands. It compiles a Paris-targeted Solidity fixture,
-deploys it with an EIP-1559 transaction, checks code and constructor state, estimates and executes
-a state-changing call, validates its receipt, event, transaction, and block, then proves nested
-`anvil_snapshot`/`anvil_revert` behavior including nonce, receipt-index, bytecode, and state
-restoration. An outer snapshot makes the test leave the target node unchanged.
-
-By default this portable test does not call Filecoin-specific endpoints because it must also pass
-against upstream Anvil. Set `FILECOIN_ASSERTIONS=1` when targeting fvm-anvil to add the gas-breakdown
-checks without changing the runner.
-
-### Milestone 2: Anvil control parity needed for development
-
-- Interval and mixed mining.
-- Full time controls.
-- Fee/FIFO transaction ordering and txpool inspection.
-- `anvil_setBalance`, `anvil_addBalance`, and `anvil_setNonce`.
-- `anvil_setCode`.
-- `anvil_setStorageAt`.
-- `anvil_dealERC20`.
-- `anvil_setERC20Allowance`.
-- Broader logs, filters, and historical queries.
-
-The state mutation methods are ordered deliberately: code/storage primitives first, followed by ERC-20 helpers built on temporary-root simulation and storage writes.
-
-### Later milestones
-
-- State dump/load using CAR plus node metadata.
-- WebSocket subscriptions and optional IPC if not included earlier.
-- Broader Anvil extensions where they have honest FEVM semantics.
-- Chain forking after its design is agreed.
-
-## Verification evidence from investigation
-
-The existing ref-FVM FEVM gas test was run directly:
-
-```text
-cargo test -p fvm_integration_tests --test gasfuzz test_gasfuzz -- --nocapture
-```
-
-Result:
-
-```text
-1 passed; 0 failed
-finished in 40.06s
-```
-
-The test deploys a recursive EVM contract through EAM, executes it through ref-FVM, collects FVM gas charge points, and checks out-of-gas boundaries. It proves the direct executor path; the first implementation slice must repeat the proof with the selected v18 bundle, NV28, and exact signed Filecoin message lengths.
+It deploys a Paris-targeted Solidity fixture, reads and mutates contract state, validates its
+transaction, receipt, event, and block, and exercises nested snapshot/revert behavior. Set
+`FILECOIN_ASSERTIONS=1` when targeting fvm-anvil to include Filecoin gas and canonical-index checks.
 
 ## Primary references in `extern`
 

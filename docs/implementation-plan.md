@@ -1,29 +1,22 @@
 # fvm-anvil implementation plan
 
 Status: active  
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
-This document is the current execution plan for the architecture recorded in `docs/design.md`.
-It defines component ownership, dependency direction, implementation waves, delegation boundaries,
-and the evidence required before each wave is complete. Design rationale and compatibility findings
-remain in `docs/design.md`.
-
-Offline mainnet-state preparation and the active `press` tool are tracked in
-[`docs/press.md`](press.md). The shared `fvm-anvil-state` crate owns its prepared-state format and
-ForestCAR storage. Prepared-state node import is delivered; writable-overlay persistence is next.
+This document records current component ownership and remaining implementation work. Design
+rationale and compatibility constraints live in [`docs/design.md`](design.md). Offline state
+preparation and prepared-state import are documented in [`docs/press.md`](press.md).
 
 ## Current status
 
-Waves 0-3 and Press stages 1-4 are implemented. Waves 4-5 and writable-overlay persistence remain
-planned scope.
+The executable transaction path, HTTP RPC transport, synthetic canonical chain, instant/manual/
+interval/mixed startup mining, snapshots, Filecoin gas diagnostics, deterministic development
+accounts, and prepared-state import are implemented.
 
-Observed evidence: the workspace has 97 passing tests and three ignored real-bundle tests;
-workspace formatting and strict Clippy pass. The release binary was exercised over HTTP against
-patched mainnet WFIL state at epoch 6,251,280. It mounted the prepared ForestCAR without the source
-snapshot, funded the deterministic development caller, exposed patched code and storage, executed
-an EIP-1559 transaction, returned a successful receipt and Filecoin gas breakdown, and reported
-distinct prepared and advancing current state roots. The existing NarrowSlice deployment,
-transaction, event, snapshot, and canonical-index acceptance evidence also remains valid.
+Remaining work is broader Anvil development-control compatibility and writable-overlay persistence.
+The authoritative implemented RPC list is in
+[`docs/design.md`](design.md#implemented-rpc-compatibility); unsupported methods return JSON-RPC
+`method not found`.
 
 
 ## Architectural decision
@@ -49,9 +42,9 @@ Production crates must not depend on Forest, `anvil-core`, the main `anvil` crat
 ref-FVM integration harness. Forest, Foundry, ref-FVM integration tests, and builtin actor sources
 under `extern/` are read-only behavioral references.
 
-Actor Wasm and code CIDs come from the selected CAR bundle. Initial production code does not
-depend on individual builtin actor crates; it adapts only the minimal serialized v18 state
-representations needed for genesis, with attribution and explicit schema tests.
+Actor Wasm and code CIDs come from the selected CAR bundle. Production code does not depend on
+individual builtin actor crates; it adapts only the minimal serialized v18 state representations
+needed for genesis, with attribution and explicit schema tests.
 
 ## Component ownership
 
@@ -80,15 +73,15 @@ A worker-local `NodeRuntime` is the only owner of:
 - The adopted FVM state root.
 - Actor bundle and manifest artifacts.
 - Synthetic blocks and historical roots.
-- Transaction, receipt, log, Filecoin CID, and gas indexes.
+- Transaction, receipt, log, and gas indexes.
 - The pending transaction pool.
-- Mining mode and one-shot block overrides.
+- Mining mode.
 - Snapshots.
 
 `NodeRuntime` is constructed inside a dedicated 64 MiB OS thread. That thread runs a bounded
 blocking loop over semantic commands. Async callers receive a cloneable `NodeHandle`; the runtime,
-blockstore, machine, executor, state tree, and externs never cross the worker boundary. Interval
-mining and timer-driven execution remain Wave 4 work.
+blockstore, machine, executor, state tree, and externs never cross the worker boundary. Startup
+interval mining is scheduled by the binary and submits semantic mine commands through `NodeHandle`.
 
 
 The in-memory implementation uses `Rc<MemoryBlockstore>`. Cloning `MemoryBlockstore` itself would
@@ -105,10 +98,10 @@ execute_at(root, block_context, prepared_messages, mode) -> candidate execution 
 commit_block(candidate batch) -> adopted root plus canonical indexes
 ```
 
-Only `commit_block` may publish a root, advance the head, update canonical indexes, remove included
-pool entries, or consume block overrides. Calls and gas estimation use `execute_at` without
-`commit_block`. Fatal machine/executor errors leave the adopted root and indexes unchanged; normal
-actor failure exit codes produce failed transaction receipts and are committed.
+Only canonical block commit may publish a root, advance the head, update canonical indexes, or
+remove included pool entries. Calls and gas estimation execute without publishing their candidate
+root. Fatal machine/executor errors leave the adopted root and indexes unchanged; normal actor
+failure exit codes produce failed transaction receipts and are committed.
 
 ### `fvm-anvil-rpc`
 
@@ -141,133 +134,68 @@ no RPC method logic, transaction conversion, actor initialization, or chain tran
 Public node DTOs may use stable Alloy primitives such as `Address`, `B256`, `Bytes`, and `U256`, but
 not Alloy RPC response types or serde attributes.
 
-Initial semantic operations are:
+Current semantic operations are:
 
-- Chain ID, accounts, block, account, transaction, receipt, log, and gas queries.
+- Chain ID, accounts, block, account, transaction, receipt, log, fee, and gas queries.
 - Raw transaction submission.
 - Calls and gas estimation against a selected root.
-- Forced and mode-dependent mining.
+- Forced and automine-dependent block production.
 - Snapshot creation and revert.
-- Mining-mode and next-block controls.
-- Filecoin message CID and gas diagnostics.
+- Automine control.
+- Filecoin gas breakdown, call trace, and state-root queries.
 
-Newtypes distinguish Ethereum-visible gas, FVM gas, epochs, timestamps, message lengths, pool
-arrival order, and snapshot IDs. `NodeError` retains stable semantic categories; only the RPC crate
-maps them to JSON-RPC errors.
+`NodeError` retains stable semantic categories; only the RPC crate maps them to JSON-RPC errors.
 
 ## Canonical state and snapshots
 
 The canonical chain store is the only source of blocks, historical roots, transaction positions,
 receipts, logs, and gas diagnostics. RPC and bridge crates keep no parallel caches.
 
-Snapshots retain the adopted root, canonical frontier, epoch, timestamp, base fee, index frontiers,
-and one-shot overrides. They do not copy the blockstore, engine pool, bundle, worker, mining mode,
-or transaction pool. Revert consumes a successful snapshot ID, removes the canonical suffix and
-its indexes, and revalidates still-pending pool entries against restored state. Transactions mined
-in the removed suffix are not automatically reinserted, matching Anvil's separation between its
-backend snapshot and pool.
+Snapshots retain the adopted root, canonical blocks, transaction and receipt indexes, gas indexes,
+epoch, and timestamp. They do not copy the blockstore, engine pool, bundle, worker, mining mode, or
+transaction pool. Revert consumes the selected snapshot and all newer snapshots, removes the
+canonical suffix and its indexes, and retains pool entries that are still valid against restored
+state. Transactions mined in the removed suffix are not automatically reinserted.
 
-## Implementation waves
+## Current roadmap
 
-### Wave 0: workspace and contracts
+### Broader development controls
 
-1. Create the four-crate Cargo workspace.
-2. Centralize and pin compatible Rust, Alloy, ref-FVM, Foundry, and actor-bundle identities.
-3. Establish the one-way dependency graph.
-4. Define the initial node-domain DTOs, typed errors, and `NodeHandle` seam.
-5. Verify metadata and reject forbidden production dependencies.
+Implement time controls, fee/FIFO transaction ordering, pool inspection and removal, and balance and
+nonce controls. Each method needs exact Foundry wire-format comparison, a public JSON-RPC
+compatibility case, and a real endpoint smoke test.
 
-Gate: workspace metadata resolves, the dependency graph has no cycle or forbidden edge, and all
-public boundary types have one owner.
+Runtime mining controls must have one timer owner. A call that changes automine or interval behavior
+must take ownership away from the startup scheduler; snapshot/revert must not restore process-control
+state.
 
-### Wave 1: parallel foundations
+### Versioned direct EVM state controls
 
-#### Ethereum bridge
+Implement a private builtin-actors v18 state adapter, then `anvil_setCode`,
+`anvil_setStorageAt`, ERC-20 balance probing, and allowance probing in that dependency order.
+Direct mutations must publish a new current FVM root, participate in snapshots, preserve unaffected
+actor fields, and be verified through public EVM behavior. Every state-schema test names the actor
+bundle and network version explicitly.
 
-Implement EIP-1559 decoding, signature/chain-ID validation, sender recovery, f4 mapping,
-EAM/EVM routing, delegated signature construction, exact `SignedMessage` construction, and exact
-serialized length. Adapt fixed Forest vectors with attribution.
+Local `--actor-bundle` inputs remain a genesis-time development choice. The user is responsible for
+selecting a bundle compatible with the v18 state adapter.
 
-Gate: fixed raw transactions produce the expected sender, Ethereum hash, Filecoin message fields,
-signature bytes, message CID, and serialized length.
+### Prepared-state persistence
 
-#### Runtime and genesis nucleus
+Persist the writable overlay and adopted root without copying the immutable prepared ForestCAR.
+Restart must recover the same current root and canonical projection or fail clearly; partial
+publication must not be accepted.
 
-Implement the worker, verified actor CAR import, manifest validation, minimal f00/f01/f02/f010/f099
-state, one prefunded placeholder EOA, deterministic externs, reusable engine pool, and ephemeral
-machine/executor construction.
+### Deferred work
 
-Gate: an explicit message runs on the real NV28/v18 runtime and exercises placeholder promotion and
-fee handling.
+- WebSocket subscriptions and optional IPC.
+- Broader Anvil extensions where FEVM can provide honest semantics.
+- General remote-chain forking.
+- New imported-actor synthesis and workload-specific state witnesses.
 
-#### RPC protocol foundation
+## Completion evidence
 
-Implement local request parsing, aliases, JSON-RPC envelope use, the generic HTTP router adapter,
-initial read-only node dispatch, and typed error mapping.
-
-Gate: focused tests cover empty, omitted, positional, alias, invalid-params, notification, and batch
-forms without using Anvil's backend.
-
-### Wave 2: executable transaction slice
-
-1. Integrate raw transaction submission through the bridge.
-2. Add state-dependent nonce, balance, and fee validation.
-3. Add a concrete pending/ready pool and instant/manual selection.
-4. Implement non-publishing calls and FVM gas estimation.
-5. Implement atomic block commit and synthetic indexes.
-6. Convert EAM returns and EVM events.
-7. Implement the standard RPC methods required by `forge create` and `cast`.
-8. Implement `filecoin_getGasBreakdown`.
-9. Wire CLI configuration, startup, readiness, transport, and shutdown.
-
-Gate: launch the actual binary, deploy through EAM, call and transact through EVM, inspect the
-block/transaction/receipt/log and Filecoin gas data, and prove a historical simulation does not
-publish a root.
-
-### Wave 3: snapshots and Anvil controls
-
-1. Implement snapshot/revert and canonical suffix pruning.
-2. Revalidate the pool after revert.
-3. Implement manual mining and automine controls with exact Anvil aliases and response shapes.
-4. Adapt relevant Foundry integration cases through public JSON-RPC.
-5. Run the combined portable public-JSON-RPC acceptance runner, including
-   `filecoin_getGasBreakdown` and snapshot canonical-index pruning assertions.
-
-Gate: the combined acceptance runner proves snapshot/revert restores nonce, bytecode, receipt
-visibility, state, and block height, while also covering Filecoin gas breakdown and canonical-index
-pruning.
-
-### Wave 4: broader development controls
-
-Delivered: deterministic genesis accounts and funding, genesis block/fee/gas configuration,
-manual/interval/mixed startup mining, Anvil CLI aliases, server controls, startup output, and
-`--config-out`. Remaining work covers time controls, fee/FIFO ordering, pool inspection/removal,
-and balance/nonce controls. Each remaining behavior receives a public-boundary compatibility case
-and real endpoint smoke test.
-
-### Wave 5: versioned direct EVM state controls
-
-Implement a private v18 actor-state adapter, then `anvil_setCode`, `anvil_setStorageAt`, ERC-20
-balance probing, and allowance probing in that dependency order. Every state-schema test names the
-actor bundle and network version explicitly. Local bundles are trusted as development inputs; the
-user is responsible for selecting one compatible with the active state adapter.
-
-## Delegation and supervision
-
-Before each wave, the supervisor fixes shared interfaces, file ownership, and acceptance criteria in
-the delegation context. Independent tasks are dispatched together; the central `NodeRuntime`, root
-adoption, and canonical indexes have one implementation owner per wave. Agents do not add crates,
-shared abstractions, dependency versions, or alternate DTOs without an explicit contract change.
-
-Agents skip workspace-wide format, lint, and test commands. At each barrier the supervisor:
-
-1. Verifies changed APIs and dependency direction.
-2. Resolves mismatches at the owning boundary without shims.
-3. Exercises the real runtime or endpoint first.
-4. Runs focused package checks.
-5. Requests a review of ownership leaks, root-publication bugs, panic paths, arithmetic, and forbidden
-   dependencies.
-6. Runs workspace formatting, Clippy, and tests after the milestone smoke test succeeds.
-
-The supervisor retains ownership of root manifests, dependency versions, the public `NodeHandle`
-contract, `NodeRuntime` invariants, cross-crate integration, and final acceptance evidence.
+For runtime and RPC changes, exercise the real binary and changed public endpoint before running
+focused tests. `tests/acceptance/run.sh` remains the end-to-end compatibility gate for deployment,
+transaction, event, receipt, block, gas, and snapshot behavior. Run workspace formatting, strict
+Clippy, and tests only after the endpoint smoke test succeeds.

@@ -1,11 +1,10 @@
 # Press recipe authoring notes
 
-Status: working runbook
-Last updated: 2026-08-04
+Status: working runbook  
+Last updated: 2026-08-05
 
-These notes capture the source checks, dependency analysis, patch derivation, and runtime proof needed
-to turn a contract deployment into a reproducible Press recipe. They are intentionally structured so
-the workflow can later become an agent skill.
+This runbook covers source checks, dependency analysis, patch derivation, and runtime proof for
+turning a contract deployment into a reproducible Press recipe.
 
 ## Inputs to pin
 
@@ -128,6 +127,9 @@ The selected source snapshot is
 `snapshots/forest_snapshot_mainnet_2026-08-04_height_6251280.forest.car.zst`, at epoch 6,251,280.
 It postdates the deployment record's 2026-06-11 publication time.
 
+The `snapshots/` directory is ignored by version control. Obtain the source snapshot separately and
+build the prepared archive locally with the recipe above.
+
 ### Authority patch
 
 The pinned OpenZeppelin upgradeable dependency is revision
@@ -171,52 +173,34 @@ FWSS or dataset listener actors. Proxy views and upgrade-control paths are expec
 operations that invoke an omitted listener are outside this recipe's contract and require adding that
 listener actor explicitly.
 
-### Observed archive and runtime proof
+### Prepared archive
 
-The generated `snapshots/pdp-verifier-mainnet-v3.4.0.press.car.zst` is 2,062,000,595 bytes and
-contains 11,134,707 blocks. Full construction and reachable-DAG verification took 2,355.0 seconds.
-Its roots are:
+The local `snapshots/pdp-verifier-mainnet-v3.4.0.press.car.zst` artifact is 2,062,000,595 bytes. Its
+inspected roots are:
 
 ```text
 metadata: bafy2bzaceaikjfyizozynzde3sh5f36cet5omc42kvbqtohxh2u7dpfxtx26u
 prepared: bafy2bzacedxp7q7gkbh7jt62b3rn7tmfbc5pvkc334ymvsu3rkqdka3adkriw
 ```
 
-Inspection recorded the source owner
-`0x3569b2600877a9f42d9ebdd205386f3f3788f3e5` and the replacement Anvil owner. Starting
-`fvm-anvil` from the archive reached RPC readiness in under one second because node startup validates
-the compact prepared boundary without repeating Press's full 11-million-block traversal.
-
-RPC proof observed:
-
-- proxy code size: 130 bytes;
-- implementation code size: 19,726 bytes;
-- ERC-1967 implementation:
-  `0xb41A97FEDD2D9497C639A643ec75E56CbCeDe8BA`;
-- `VERSION()`: `3.4.0`;
-- `owner()`: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`;
-- imported `getNextDataSetId()`: 1,443;
-- a non-owner upgrade announcement reverted with `OwnableUnauthorizedAccount`;
-- owner announcement transaction:
-  `0x7d3f9d733c26fbade64103676b9f27ae32ae525fd1f4f61741a86ea640f38ec8`;
-- owner `upgradeToAndCall` transaction:
-  `0x18de2d4e9c2a3794eba797496889dff1422b0940ad61bf02dff392a1e37911c8`.
-
-Both owner transactions succeeded. The second transaction emitted `Upgraded`, cleared
-`nextUpgrade`, and produced a `filecoin_getGasBreakdown` result.
+Inspection records the source owner
+`0x3569b2600877a9f42d9ebdd205386f3f3788f3e5` and the replacement Anvil owner. The public behavior
+checks for this archive are the proxy and implementation code, ERC-1967 implementation address,
+`VERSION()` 3.4.0, patched `owner()`, and owner/non-owner upgrade authorization paths.
 
 ### PDPVerifier add-pieces gas benchmark
 
 `benchmarks/pdp-verifier/run.py` benchmarks the imported v3.4.0 implementation against the
 storage-optimized implementation at PDP revision
-`391936ea0570b19eb7b92955f0ace317fdafa661` (`v3.4.0-23-g391936e`). Start the prepared node, then
-run the benchmark:
+[`391936ea0570b19eb7b92955f0ace317fdafa661`](https://github.com/FilOzone/pdp/tree/391936ea0570b19eb7b92955f0ace317fdafa661)
+(`v3.4.0-23-g391936e`). Check out that revision at `/path/to/pdp`, start the prepared node, then run
+the benchmark:
 
 ```console
 $ target/release/fvm-anvil \
     --state snapshots/pdp-verifier-mainnet-v3.4.0.press.car.zst \
     --port 18546
-$ benchmarks/pdp-verifier/run.py
+$ benchmarks/pdp-verifier/run.py --pdp-repo /path/to/pdp
 ```
 
 Each variant starts from the same imported-state snapshot and creates data set 1,443 with no
@@ -244,18 +228,7 @@ charge-name aggregate in
 | 5,007 | 16 | 1,446,052,854 | 168,536,029 | -88.3% |
 | 5,023 | 32 | 2,602,930,372 | 220,412,079 | -91.5% |
 
-The runner fixes `maxFeePerGas` at 1,519,163 attoFIL and `maxPriorityFeePerGas` at 1 attoFIL.
-This prevents client fee heuristics from affecting an execution-gas benchmark. During development,
-receipt `effectiveGasPrice` incorrectly projected total Filecoin charges per used gas and exceeded
-the submitted EIP-1559 fee cap. Foundry fed that value back into later priority fees, producing
-spurious enormous balance requirements. Receipts now use the bounded EIP-1559 effective price;
-exact Filecoin burns, refunds, tips, and penalties remain available from the Filecoin-specific
-endpoints.
-
-## Performance note
-
-A profile of the 454-block WFIL extraction showed repeated decompression of the same ForestCAR frame
-as the dominant cost. The bounded 512 MiB decompressed-frame cache reduced the observed profiled
-build from 42.1 seconds to 2.7 seconds on the same snapshot and recipe. Buffered frame/index writes
-preserve byte-for-byte output while avoiding per-block metadata and small-write system calls. The
-cache is bounded and does not load the source snapshot wholesale.
+The runner fixes `maxFeePerGas` at 1,519,163 attoFIL and `maxPriorityFeePerGas` at 1 attoFIL so
+client fee heuristics do not affect the execution-gas comparison. Receipt `effectiveGasPrice`
+remains the bounded EIP-1559 price; exact Filecoin burns, refunds, tips, and penalties are available
+from the Filecoin-specific endpoints.

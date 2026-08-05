@@ -6,16 +6,36 @@ Guidance for AI coding agents working in this repository.
 
 `fvm-anvil` is an Anvil-compatible local development node that executes Ethereum transactions with `ref-fvm` and Filecoin's builtin EAM, EVM, and EthAccount actors. Its primary purpose is faithful, fast Filecoin gas measurement without running Filecoin consensus or mining infrastructure.
 
-Design decisions and current architecture constraints live in `docs/design.md`. Read that document before changing runtime behavior, RPC compatibility, actor initialization, or gas semantics.
+Read the relevant living documentation before changing behavior:
 
-The source trees under `extern/` are read-only upstream references:
+- `docs/design.md`: execution model, defaults, implemented RPC surface, and compatibility
+  constraints.
+- `docs/implementation-plan.md`: crate ownership and remaining work.
+- `docs/press.md`: prepared-state format and import boundary.
+- `docs/press-recipes.md`: reproducible mainnet-state preparation workflows.
+
+The optional source trees under `extern/` are ignored by Git and are not production build inputs.
+When present, treat them as read-only upstream references:
 
 - `extern/foundry`: RPC behavior, Anvil controls, transport, and compatibility tests.
 - `extern/forest`: canonical Ethereum-to-Filecoin conversion and RPC semantics.
 - `extern/ref-fvm`: FVM machine, executor, blockstore, gas accounting, and integration harness.
-- `extern/builtin-actors`: EAM, EVM, EthAccount state and execution behavior.
+- `extern/builtin-actors`: EAM, EVM, and EthAccount state and execution behavior.
 
-Never edit files under `extern/`. Adapt narrowly scoped upstream code into this workspace with attribution where required.
+Never edit files under `extern/`. Adapt only the narrow upstream behavior needed here, with
+attribution where required.
+
+## Repository map
+
+- `crates/fvm-anvil`: CLI, configuration, process lifetime, startup output, and interval scheduler.
+- `crates/fvm-anvil-rpc`: JSON-RPC wire parsing, response projection, and HTTP transport.
+- `crates/fvm-anvil-node`: the worker, FVM execution, synthetic chain, pool, and snapshots.
+- `crates/fvm-anvil-eth`: deterministic Ethereum-to-Filecoin transaction conversion.
+- `crates/fvm-anvil-state`: ForestCAR and prepared-state formats shared by the node and Press.
+- `crates/press`: offline snapshot selection, patching, inspection, and archive construction.
+- `tests/acceptance`: public JSON-RPC deployment, transaction, gas, and snapshot workflow.
+- `recipes` and `benchmarks`: reproducible prepared-state experiments. `snapshots/` and generated
+  benchmark results are local, ignored artifacts.
 
 ## Core model and source authority
 
@@ -40,7 +60,10 @@ Never edit files under `extern/`. Adapt narrowly scoped upstream code into this 
 - Prove direct actor-state controls through the resulting public EVM behavior. Correct-looking
   HAMT/KAMT/storage bytes are insufficient if actor invariants or contract-visible behavior differ.
 
-## Commands
+## Commands and prerequisites
+
+The pinned Rust toolchain is selected by `rust-toolchain.toml`. The public acceptance runner also
+requires `cast`, `forge`, and `jq`.
 
 ```bash
 cargo build --workspace
@@ -51,10 +74,18 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo metadata --no-deps --format-version 1
 ```
 
-Use focused package or test commands during development. Run workspace formatting, Clippy, and tests once after the changed behavior has been exercised directly.
-Measure startup using wall-clock time from launching the already-built release binary until the
-RPC listener is ready. Do not include Cargo build time or use summed user CPU time; Wasmtime
-compiles actors in parallel.
+Use focused package or test commands during development. For RPC or execution changes, start the
+real binary and run the public acceptance flow before the workspace-wide checks:
+
+```bash
+cargo run -p fvm-anvil -- --port 18545
+RPC_URL=http://127.0.0.1:18545 FILECOIN_ASSERTIONS=1 tests/acceptance/run.sh
+```
+
+The official actor bundle downloads and verifies automatically on first startup. A local compatible
+v18 CAR can be selected with `--actor-bundle`. For startup performance work, measure wall-clock
+time from launching an already-built release binary until the RPC listener is ready; do not include
+Cargo build time or summed user CPU time.
 
 ## Architecture
 
@@ -76,9 +107,9 @@ Keep these established system constraints:
   create-actor permission, so actor ID 98 must remain absent from every reachable state.
 - Return a clear unsupported error when FEVM cannot provide an Anvil behavior; never fake success.
 - Verify the pinned official actor bundle root and required manifest entries before caching or
-  executing it. Cache official downloads under the CLI-selected XDG/home cache path with the
-  expected root in the filename, replace invalid entries, and never copy local `--actor-bundle`
-  inputs into that cache.
+  executing it. Cache official downloads under the environment-selected XDG/home cache path with
+  the expected root in the filename, replace invalid entries, and never copy local
+  `--actor-bundle` inputs into that cache.
 
 Use public Foundry and `ref-fvm` crates where they fit. Adapt narrowly scoped Forest and integration-harness behavior rather than taking production dependencies on Forest, `fvm_integration_tests`, `anvil-core`, or the main `anvil` crate.
 
@@ -87,17 +118,21 @@ Use public Foundry and `ref-fvm` crates where they fit. Adapt narrowly scoped Fo
 Every test must defend observable behavior and fail on a plausible implementation bug.
 
 - Use focused unit tests for pure protocol and state-transition logic.
-- Use integration tests for actor execution and gas accounting with an explicit actor bundle and network version.
+- Use integration tests for actor execution and gas accounting with an explicit actor bundle and
+  network version.
 - Use black-box endpoint tests for JSON-RPC parameters, aliases, errors, responses, and workflows.
-- Adapt applicable Anvil integration cases for behavior compatibility; do not copy tests that only exercise `EthApi` internals.
+- Adapt applicable Anvil integration cases through public JSON-RPC; do not copy tests that only
+  exercise `EthApi` internals.
 - Keep actor bundle and network-version inputs explicit in tests that depend on actor state schemas.
-- Tests that use a future chain fork must contain `fork` in their name.
 
-For permanent RPC or execution behavior, exercise the real endpoint or runtime path before relying on the test suite. For gas behavior, assert FVM gas outputs or charge names rather than wall-clock time. Keep actor execution fixtures deterministic.
+For permanent RPC or execution behavior, exercise the real endpoint or runtime path before relying
+on the test suite. For gas behavior, assert FVM gas outputs or charge names rather than wall-clock
+time. Keep actor execution fixtures deterministic.
 
 ## RPC design
 
-Use Anvil's official documentation and checked-in Foundry request bindings as the wire-format reference. Preserve:
+Use Anvil's official documentation and the pinned Foundry request bindings as the wire-format
+reference. Preserve:
 
 - Exact method names and aliases.
 - Empty, omitted, positional, and sequence parameter handling.
@@ -111,9 +146,8 @@ Keep Filecoin-specific observability under a `filecoin_` namespace. Do not overl
 
 The CLI follows a strict stdout/stderr contract:
 
-- stdout is for explicitly requested machine-readable output.
-- stderr is for warnings, errors, progress, status text, prompts, and the startup banner.
-- JSON output changes formatting, not channel cleanliness.
+- stdout is for requested command results intended for capture or piping.
+- stderr is for warnings, errors, progress, status text, and the startup banner.
 - Quiet mode suppresses diagnostics, not requested results.
 - Verbosity changes diagnostics, not stdout content.
 
@@ -123,14 +157,18 @@ Use structured `tracing` for runtime diagnostics. Do not leave unconditional `pr
 
 When adding or changing configuration:
 
-1. Define one canonical field, explicit default, CLI spelling, environment behavior if any, and serialization behavior.
-2. Resolve config-file, environment, and CLI precedence in one place.
+1. Define one canonical field, explicit default, CLI spelling, environment behavior if any, and
+   serialization behavior.
+2. Resolve precedence among the configuration sources that actually exist in one place.
 3. Validate genesis-time values before starting transports or the worker.
 4. Wire the value through every consumer without reading environment variables in library code.
 5. Add focused parsing and precedence tests.
-6. Update `docs/design.md` when the value changes an architectural default or compatibility guarantee.
+6. Update `docs/design.md` when the value changes an architectural default or compatibility
+   guarantee.
 
-Actor bundle, network version, chain ID, genesis accounts, and initial base fee are genesis-time configuration. Runtime RPC changes must not silently rewrite genesis configuration.
+Network version, actor bundle, prepared or empty initial state, chain ID, genesis accounts and
+wallet derivation, genesis block number and timestamp, block gas limit, and initial base fee are
+genesis-time configuration. Runtime RPC changes must not silently rewrite them.
 
 ## Commit and PR style
 
