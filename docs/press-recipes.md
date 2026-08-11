@@ -232,3 +232,60 @@ The runner fixes `maxFeePerGas` at 1,519,163 attoFIL and `maxPriorityFeePerGas` 
 client fee heuristics do not affect the execution-gas comparison. Receipt `effectiveGasPrice`
 remains the bounded EIP-1559 price; exact Filecoin burns, refunds, tips, and penalties are available
 from the Filecoin-specific endpoints.
+
+### PDPVerifier lifecycle gas benchmark
+
+`benchmarks/pdp-verifier/run_operations.py` uses the same imported snapshot and upgrade flow to
+compare the rest of the data-set lifecycle:
+
+```console
+$ target/release/fvm-anvil \
+    --state snapshots/pdp-verifier-mainnet-v3.4.0.press.car.zst \
+    --port 18546
+$ benchmarks/pdp-verifier/run_operations.py --pdp-repo /path/to/pdp
+```
+
+Each variant creates a data set containing 1,024 identical, valid height-5 CommPv2 zero trees. The
+runner measures data-set creation; representative add, CID lookup, pagination, and CID search calls;
+and data-set deletion and incremental cleanup. For removal batches of 1, 32, and 96 pieces, it
+measures `schedulePieceDeletions`, the immediately following `nextProvingPeriod` that applies those
+removals, and a possession proof containing the required five challenges. The zero-tree fixture
+provides a valid proof for every possible piece and leaf offset, so both implementations execute the
+same challenge-dependent path without mocking Filecoin randomness.
+
+The 96-piece case is the largest removal batch in this comparison because the deployed
+implementation already consumes 7.14 billion gas while applying it, leaving bounded headroom below
+the 10-billion block gas limit.
+
+The runner checks piece counts, scheduled removal application, proof success, and final cleanup. It
+records receipts, complete Filecoin gas traces, charge-name aggregates, and the baseline/optimized
+comparison in `benchmarks/pdp-verifier/results/pdp-operation-gas-traces.json`.
+
+Read-only calls are submitted as transactions so they produce receipts and Filecoin gas traces; they
+do not mutate verifier state.
+
+| Operation | Case | Deployed gas | Optimized gas | Change |
+| --- | --- | ---: | ---: | ---: |
+| `createDataSet` | empty | 123,076,468 | 123,280,376 | +0.2% |
+| `addPieces` | 1 | 174,824,288 | 104,081,347 | -40.5% |
+| `addPieces` | 8 | 799,346,484 | 131,556,419 | -83.5% |
+| `addPieces` | 32 | 2,548,376,069 | 216,751,448 | -91.5% |
+| `getPieceCid` | tail | 19,602,345 | 24,729,807 | +26.2% |
+| `getActivePiecesByCursor` | 32 full | 226,066,144 | 132,714,635 | -41.3% |
+| `findPieceIdsByCid` | limit 32 | 213,416,170 | 58,433,616 | -72.6% |
+| `schedulePieceDeletions` | 1 | 77,567,624 | 81,705,016 | +5.3% |
+| `nextProvingPeriod` | remove 1 | 463,004,407 | 240,960,202 | -48.0% |
+| `provePossession` | 5 challenges after remove 1 | 185,953,204 | 101,444,392 | -45.4% |
+| `schedulePieceDeletions` | 32 | 197,760,288 | 152,283,667 | -23.0% |
+| `nextProvingPeriod` | remove 32 | 2,753,390,816 | 460,964,008 | -83.3% |
+| `provePossession` | 5 challenges after remove 32 | 183,231,003 | 97,787,401 | -46.6% |
+| `schedulePieceDeletions` | 96 | 382,838,618 | 252,093,235 | -34.2% |
+| `nextProvingPeriod` | remove 96 | 7,142,448,164 | 811,948,603 | -88.6% |
+| `provePossession` | 5 challenges after remove 96 | 184,633,835 | 100,597,572 | -45.5% |
+| `getActivePiecesByCursor` | 32 after 129 holes | 436,279,799 | 162,286,483 | -62.8% |
+| `deleteDataSet` | 1,024 slots | 94,626,110 | 77,991,600 | -17.6% |
+| `cleanupPieces` | 1 | 149,154,504 | 89,602,117 | -39.9% |
+| `cleanupPieces` | 16 | 1,341,620,438 | 98,475,885 | -92.7% |
+| `cleanupPieces` | 64 | 4,553,835,628 | 136,541,618 | -97.0% |
+| `cleanupPieces` | 96 | 6,598,846,685 | 161,517,495 | -97.6% |
+| `cleanupPieces` | 96 and finalize | 658,885,130 | 194,883,685 | -70.4% |

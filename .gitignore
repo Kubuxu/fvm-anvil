@@ -3,4 +3,3 @@ extern
 /tests/acceptance/cache/
 /tests/acceptance/out/
 snapshots
-/benchmarks/pdp-verifier/results/pdp-add-pieces-gas-traces.json
