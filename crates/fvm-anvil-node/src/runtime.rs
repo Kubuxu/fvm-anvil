@@ -1,6 +1,4 @@
-use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
-use std::fmt;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -19,18 +17,15 @@ use fvm_anvil_eth::{
     project_event,
 };
 use fvm_anvil_state::{
-    ForestCar, prepared::PreparedStateMetadata, verify::validate_prepared_archive,
+    ForestCar, evm::EvmStateV18, prepared::PreparedStateMetadata, verify::validate_prepared_archive,
 };
 use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding::CborStore;
-use fvm_ipld_encoding::tuple::{Deserialize_tuple, serde_tuple};
-use fvm_ipld_kamt::{AsHashedKey, Config as KamtConfig, HashedKey, Kamt};
 use fvm_shared::address::{Address as FvmAddress, Payload};
 use fvm_shared::bigint::{BigInt, Sign};
 use fvm_shared::chainid::ChainID;
 use fvm_shared::econ::TokenAmount;
 use multihash_codetable::Code;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::bundle::{BundleArtifacts, load_bundle};
 use crate::config::NodeConfig;
@@ -131,109 +126,6 @@ impl MiningSchedule {
             .and_then(|span| self.first_timestamp.checked_add(span))
             .expect("mining timestamp arithmetic must be preflighted")
     }
-}
-
-// The v18 EVM actor stores both keys and values as minimally encoded, big-endian byte strings.
-// This adapter duplicates only that attributed wire representation (Protocol Labs, MIT OR
-// Apache-2.0) and deliberately does not depend on an individual actor crate.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-struct EvmWordV18(U256);
-
-impl Serialize for EvmWordV18 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bytes = self.0.to_be_bytes::<32>();
-        let first_nonzero = bytes.iter().position(|byte| *byte != 0).unwrap_or(bytes.len());
-        serializer.serialize_bytes(&bytes[first_nonzero..])
-    }
-}
-
-impl<'de> Deserialize<'de> for EvmWordV18 {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct WordVisitor;
-
-        impl serde::de::Visitor<'_> for WordVisitor {
-            type Value = EvmWordV18;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("an EVM word encoded in at most 32 big-endian bytes")
-            }
-
-            fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if bytes.len() > 32 {
-                    return Err(E::invalid_length(bytes.len(), &self));
-                }
-                Ok(EvmWordV18(U256::from_be_slice(bytes)))
-            }
-        }
-
-        deserializer.deserialize_bytes(WordVisitor)
-    }
-}
-
-/// v18's contract-state key routing uses the full 32-byte big-endian word unchanged.
-struct StateHashAlgorithmV18;
-
-impl AsHashedKey<EvmWordV18, 32> for StateHashAlgorithmV18 {
-    fn as_hashed_key(key: &EvmWordV18) -> Cow<'_, HashedKey<32>> {
-        Cow::Owned(key.0.to_be_bytes())
-    }
-}
-
-type EvmStateKamtV18<BS> = Kamt<BS, EvmWordV18, EvmWordV18, StateHashAlgorithmV18>;
-
-const EVM_STATE_KAMT_CONFIG_V18: KamtConfig =
-    KamtConfig { min_data_depth: 0, bit_width: 5, max_array_width: 1 };
-
-/// builtin-actors v18 EVM state tuple, duplicated locally to avoid an actor-crate dependency.
-/// The wire layout is Copyright Protocol Labs, MIT OR Apache-2.0.
-#[allow(dead_code)]
-#[derive(Deserialize_tuple)]
-struct EvmStateV18 {
-    bytecode: Cid,
-    bytecode_hash: BytecodeHashV18,
-    contract_state: Cid,
-    transient_data: Option<TransientDataV18>,
-    nonce: u64,
-    tombstone: Option<TombstoneV18>,
-}
-
-#[derive(Deserialize)]
-#[serde(transparent)]
-struct BytecodeHashV18(
-    // This private field remains in place because it is the second v18 wire-schema tuple member.
-    #[allow(dead_code)]
-    #[serde(with = "fvm_ipld_encoding::strict_bytes")]
-    [u8; 32],
-);
-
-#[allow(dead_code)]
-#[derive(Deserialize_tuple)]
-struct TransientDataV18 {
-    transient_data_state: Cid,
-    transient_data_lifespan: TransientDataLifespanV18,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize_tuple)]
-struct TransientDataLifespanV18 {
-    origin: u64,
-    nonce: u64,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize_tuple)]
-struct TombstoneV18 {
-    origin: u64,
-    nonce: u64,
 }
 
 struct PreparedInput {
@@ -527,7 +419,14 @@ impl NodeRuntime {
             return self.next_pool_nonce(address);
         }
         let (root, _, _) = self.resolve_state(selector, false)?;
-        Ok(self.actor_at(root, address)?.map_or(0, |actor| actor.sequence))
+        let Some(actor) = self.actor_at(root, address)? else {
+            return Ok(0);
+        };
+        if actor.code == self.bundle.code("evm")? {
+            Ok(self.evm_state_v18(address, &actor)?.nonce())
+        } else {
+            Ok(actor.sequence)
+        }
     }
 
     pub(crate) fn code(
@@ -545,10 +444,10 @@ impl NodeRuntime {
         let state = self.evm_state_v18(address, &actor)?;
         let bytecode = self
             .store
-            .get(&state.bytecode)
+            .get(&state.bytecode())
             .map_err(|error| NodeError::Execution(error.to_string()))?
             .ok_or_else(|| {
-                NodeError::Execution(format!("missing EVM bytecode block {}", state.bytecode))
+                NodeError::Execution(format!("missing EVM bytecode block {}", state.bytecode()))
             })?;
         Ok(Bytes::from(bytecode))
     }
@@ -567,25 +466,131 @@ impl NodeRuntime {
             return Ok(B256::ZERO);
         }
         let state = self.evm_state_v18(address, &actor)?;
-        let storage = EvmStateKamtV18::load_with_config(
-            &state.contract_state,
-            Rc::clone(&self.store),
-            EVM_STATE_KAMT_CONFIG_V18.clone(),
-        )
-        .map_err(|error| NodeError::MalformedEvmStorage {
-            address,
-            root: Box::new(state.contract_state),
-            detail: error.to_string(),
-        })?;
-        let value = storage
-            .get(&EvmWordV18(slot))
-            .map_err(|error| NodeError::MalformedEvmStorage {
+        let value = state.storage(self.store.as_ref(), slot.to_be_bytes()).map_err(|error| {
+            NodeError::MalformedEvmStorage {
                 address,
-                root: Box::new(state.contract_state),
+                root: Box::new(state.contract_state()),
                 detail: error.to_string(),
+            }
+        })?;
+        Ok(B256::from(value))
+    }
+
+    pub(crate) fn set_balance(
+        &mut self,
+        address: EthAddress,
+        balance: U256,
+    ) -> Result<(), NodeError> {
+        let mut tree = self.current_state_tree()?;
+        let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
+        actor.balance = u256_to_token_amount(balance);
+        tree.set_actor(actor_id, actor);
+        self.publish_state_tree(tree)
+    }
+
+    pub(crate) fn add_balance(
+        &mut self,
+        address: EthAddress,
+        amount: U256,
+    ) -> Result<(), NodeError> {
+        let current = self.balance(address, BlockSelector::Latest)?;
+        self.set_balance(address, current.saturating_add(amount))
+    }
+
+    pub(crate) fn set_nonce(&mut self, address: EthAddress, nonce: U256) -> Result<(), NodeError> {
+        let nonce = u64::try_from(nonce).unwrap_or(u64::MAX);
+        let mut tree = self.current_state_tree()?;
+        let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
+        if actor.code == self.bundle.code("evm")? {
+            let mut state = self.evm_state_v18(address, &actor)?;
+            state.set_nonce(nonce);
+            actor.state = state.flush(self.store.as_ref(), &actor.state).map_err(|error| {
+                NodeError::MalformedEvmState {
+                    address,
+                    state: Box::new(actor.state),
+                    detail: error.to_string(),
+                }
+            })?;
+        } else {
+            actor.sequence = nonce;
+        }
+        tree.set_actor(actor_id, actor);
+        self.publish_state_tree(tree)
+    }
+
+    pub(crate) fn set_code(&mut self, address: EthAddress, code: Bytes) -> Result<(), NodeError> {
+        let mut tree = self.current_state_tree()?;
+        let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
+        let evm_code = self.bundle.code("evm")?;
+        let mut state = if actor.code == evm_code {
+            let mut state = self.evm_state_v18(address, &actor)?;
+            state.replace_bytecode(self.store.as_ref(), code.as_ref()).map_err(|error| {
+                NodeError::MalformedEvmState {
+                    address,
+                    state: Box::new(actor.state),
+                    detail: error.to_string(),
+                }
+            })?;
+            state
+        } else {
+            EvmStateV18::create(self.store.as_ref(), code.as_ref(), actor.sequence).map_err(
+                |error| NodeError::MalformedEvmState {
+                    address,
+                    state: Box::new(actor.state),
+                    detail: error.to_string(),
+                },
+            )?
+        };
+        state.clear_tombstone();
+        actor.code = evm_code;
+        actor.state = state.flush(self.store.as_ref(), &actor.state).map_err(|error| {
+            NodeError::MalformedEvmState {
+                address,
+                state: Box::new(actor.state),
+                detail: error.to_string(),
+            }
+        })?;
+        tree.set_actor(actor_id, actor);
+        self.publish_state_tree(tree)
+    }
+
+    pub(crate) fn set_storage(
+        &mut self,
+        address: EthAddress,
+        slot: U256,
+        value: B256,
+    ) -> Result<(), NodeError> {
+        let mut tree = self.current_state_tree()?;
+        let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
+        let evm_code = self.bundle.code("evm")?;
+        let mut state = if actor.code == evm_code {
+            self.evm_state_v18(address, &actor)?
+        } else {
+            EvmStateV18::create(self.store.as_ref(), &[], actor.sequence).map_err(|error| {
+                NodeError::MalformedEvmState {
+                    address,
+                    state: Box::new(actor.state),
+                    detail: error.to_string(),
+                }
             })?
-            .map_or(U256::ZERO, |value| value.0);
-        Ok(B256::from(value.to_be_bytes::<32>()))
+        };
+        state.replace_storage_slot(self.store.as_ref(), slot.to_be_bytes(), value.0).map_err(
+            |error| NodeError::MalformedEvmStorage {
+                address,
+                root: Box::new(state.contract_state()),
+                detail: error.to_string(),
+            },
+        )?;
+        actor.code = evm_code;
+        actor.state = state.flush(self.store.as_ref(), &actor.state).map_err(|error| {
+            NodeError::MalformedEvmState {
+                address,
+                state: Box::new(actor.state),
+                detail: error.to_string(),
+            }
+        })?;
+        tree.set_actor(actor_id, actor);
+        self.publish_state_tree(tree)
     }
 
     pub(crate) fn logs(&self, filter: LogFilter) -> Result<Vec<Log>, NodeError> {
@@ -772,8 +777,13 @@ impl NodeRuntime {
     }
 
     fn next_pool_nonce(&self, address: EthAddress) -> Result<u64, NodeError> {
-        let committed =
-            self.actor_at(self.current_root, address)?.map_or(0, |actor| actor.sequence);
+        let committed = match self.actor_at(self.current_root, address)? {
+            Some(actor) if actor.code == self.bundle.code("evm")? => {
+                self.evm_state_v18(address, &actor)?.nonce()
+            }
+            Some(actor) => actor.sequence,
+            None => 0,
+        };
         Ok(self
             .pool
             .iter()
@@ -1042,7 +1052,8 @@ impl NodeRuntime {
         let epoch = i64::try_from(record.block.number).map_err(|_| {
             NodeError::Execution("canonical block exceeds the FVM epoch range".into())
         })?;
-        Ok((record.root, epoch, record.block.timestamp))
+        let root = if selector == BlockSelector::Latest { self.current_root } else { record.root };
+        Ok((root, epoch, record.block.timestamp))
     }
 
     fn resolve_block_number(&self, selector: BlockSelector) -> Result<u64, NodeError> {
@@ -1094,18 +1105,64 @@ impl NodeRuntime {
         address: EthAddress,
         actor: &ActorState,
     ) -> Result<EvmStateV18, NodeError> {
-        self.store
-            .get_cbor(&actor.state)
-            .map_err(|error| NodeError::MalformedEvmState {
+        EvmStateV18::load(self.store.as_ref(), &actor.state).map_err(|error| {
+            NodeError::MalformedEvmState {
                 address,
                 state: Box::new(actor.state),
                 detail: error.to_string(),
-            })?
-            .ok_or_else(|| NodeError::MalformedEvmState {
-                address,
-                state: Box::new(actor.state),
-                detail: "state block is absent".to_owned(),
-            })
+            }
+        })
+    }
+
+    fn current_state_tree(&self) -> Result<StateTree<Rc<RuntimeBlockstore>>, NodeError> {
+        StateTree::new_from_root(Rc::clone(&self.store), &self.current_root)
+            .map_err(|error| NodeError::Execution(error.to_string()))
+    }
+
+    fn actor_for_state_mutation(
+        &self,
+        tree: &mut StateTree<Rc<RuntimeBlockstore>>,
+        address: EthAddress,
+    ) -> Result<(u64, ActorState), NodeError> {
+        let delegated = FvmAddress::new_delegated(EAM_ACTOR_ID, address.as_slice())
+            .map_err(|error| NodeError::InvalidDelegatedAddress(error.to_string()))?;
+        let actor_id = match tree
+            .lookup_id(&delegated)
+            .map_err(|error| NodeError::Execution(error.to_string()))?
+        {
+            Some(actor_id) => actor_id,
+            None => tree
+                .register_new_address(&delegated)
+                .map_err(|error| NodeError::Execution(error.to_string()))?,
+        };
+        if let Some(actor) =
+            tree.get_actor(actor_id).map_err(|error| NodeError::Execution(error.to_string()))?
+        {
+            return Ok((actor_id, actor));
+        }
+        let state = self
+            .store
+            .put_cbor(&[0_u8; 32], Code::Blake2b256)
+            .map_err(|error| NodeError::Execution(error.to_string()))?;
+        Ok((
+            actor_id,
+            ActorState {
+                code: self.bundle.code("placeholder")?,
+                state,
+                sequence: 0,
+                balance: TokenAmount::from_atto(0),
+                delegated_address: Some(delegated),
+            },
+        ))
+    }
+
+    fn publish_state_tree(
+        &mut self,
+        mut tree: StateTree<Rc<RuntimeBlockstore>>,
+    ) -> Result<(), NodeError> {
+        self.current_root =
+            tree.flush().map_err(|error| NodeError::Execution(error.to_string()))?;
+        Ok(())
     }
 
     fn actor_at(
@@ -1494,48 +1551,11 @@ fn synthetic_block_hash(
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use alloy_primitives::{Address, B256, Bytes, U256};
-    use fvm_ipld_blockstore::MemoryBlockstore;
-    use fvm_ipld_encoding::{from_slice, to_vec};
-    use fvm_ipld_kamt::AsHashedKey;
 
-    use super::{
-        EVM_STATE_KAMT_CONFIG_V18, EvmStateKamtV18, EvmWordV18, MiningSchedule,
-        StateHashAlgorithmV18, effective_gas_price, log_matches_filter,
-    };
+    use super::{MiningSchedule, effective_gas_price, log_matches_filter};
     use crate::error::NodeError;
     use crate::types::{Log, LogFilter};
-
-    #[test]
-    fn v18_word_adapter_uses_minimal_serde_full_width_hash_and_exact_kamt_config() {
-        let zero = EvmWordV18(U256::ZERO);
-        let value = EvmWordV18(U256::from(0x0100_u64));
-        assert_eq!(to_vec(&zero).unwrap(), [0x40]);
-        assert_eq!(to_vec(&value).unwrap(), [0x42, 0x01, 0x00]);
-        assert_eq!(from_slice::<EvmWordV18>(&[0x42, 0x01, 0x00]).unwrap(), value);
-        assert_eq!(
-            <StateHashAlgorithmV18 as AsHashedKey<EvmWordV18, 32>>::as_hashed_key(&value).as_ref(),
-            &value.0.to_be_bytes::<32>()
-        );
-        assert_eq!(EVM_STATE_KAMT_CONFIG_V18.bit_width, 5);
-        assert_eq!(EVM_STATE_KAMT_CONFIG_V18.min_data_depth, 0);
-        assert_eq!(EVM_STATE_KAMT_CONFIG_V18.max_array_width, 1);
-
-        let store = Rc::new(MemoryBlockstore::default());
-        let mut storage =
-            EvmStateKamtV18::new_with_config(Rc::clone(&store), EVM_STATE_KAMT_CONFIG_V18.clone());
-        storage.set(value, EvmWordV18(U256::from(9_u64))).unwrap();
-        let root = storage.flush().unwrap();
-        let loaded = EvmStateKamtV18::load_with_config(
-            &root,
-            Rc::clone(&store),
-            EVM_STATE_KAMT_CONFIG_V18.clone(),
-        )
-        .unwrap();
-        assert_eq!(loaded.get(&value).unwrap().unwrap().0, U256::from(9_u64));
-    }
 
     #[test]
     fn effective_price_uses_eip_1559_cap_and_priority() {

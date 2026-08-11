@@ -126,8 +126,8 @@ Dependency rules:
 - `fvm-anvil-eth` depends on Alloy plus `fvm_shared` and IPLD encoding; it is deterministic and
   testable without Wasmtime.
 - `fvm-anvil-node` is the only owner of mutable chain state and the `ref-fvm` runtime.
-- `fvm-anvil-state` owns the on-disk prepared-state and ForestCAR boundary shared by `press` and the
-  node; it does not own live execution.
+- `fvm-anvil-state` owns the on-disk prepared-state and ForestCAR boundary plus the versioned
+  builtin-actors state adapters shared by `press` and the node. It does not own a live root.
 - No production crate depends on Forest, `anvil-core`, or the main `anvil` crate.
 
 ### Reuse directly
@@ -276,7 +276,12 @@ The implemented Anvil controls are:
 
 - `anvil_snapshot` (`evm_snapshot`) and `anvil_revert` (`evm_revert`);
 - `anvil_mine` and `evm_mine`;
-- `anvil_setAutomine` (`evm_setAutomine`).
+- `anvil_setAutomine` (`evm_setAutomine`);
+- `anvil_setBalance` (`hardhat_setBalance`, `tenderly_setBalance`) and `anvil_addBalance`
+  (`hardhat_addBalance`, `tenderly_addBalance`);
+- `anvil_setNonce` (`hardhat_setNonce`, `evm_setAccountNonce`);
+- `anvil_setCode` (`hardhat_setCode`);
+- `anvil_setStorageAt` (`hardhat_setStorageAt`).
 
 Methods outside this surface return JSON-RPC `method not found`; they must not report success without
 an FEVM implementation.
@@ -288,6 +293,14 @@ startup interval scheduler are process controls and are not part of a snapshot.
 
 `anvil_mine` accepts an optional block count and timestamp interval. `evm_mine` accepts its
 Ganache-compatible timestamp/options form, mines regardless of automine, and returns `"0x0"`.
+
+Direct account controls publish a new current FVM root without mining a synthetic block. `latest`
+and `pending` reads and subsequent execution use that root; explicit block numbers and hashes retain
+their historical roots. Snapshots capture direct mutations. Balance lives in `ActorState`; non-EVM
+nonce lives in `ActorState.sequence`; EVM nonce, bytecode, bytecode hash, and storage use the shared
+builtin-actors v18 adapter in `fvm-anvil-state`. Setting code or storage on an address without an EVM
+actor creates an EVM actor at that delegated address while preserving its balance and
+Ethereum-visible nonce. `anvil_addBalance` saturates at `U256::MAX`, matching Foundry.
 
 ### Block production modes
 
@@ -316,10 +329,16 @@ honestly change contract-visible behavior must remain unsupported.
 ## Remaining compatibility work
 
 The current roadmap is maintained in [`docs/implementation-plan.md`](implementation-plan.md).
-Priorities include time controls, pool ordering and inspection, balance and nonce controls, and
-versioned direct EVM state controls. `anvil_setCode` and `anvil_setStorageAt` require a v18 actor-state
-adapter; ERC-20 balance and allowance helpers depend on those primitives and proof through public
-contract calls.
+Priorities include time controls, pool ordering and inspection, ERC-20 balance and allowance
+helpers, and writable-overlay persistence. Foundry implements the ERC-20 helpers by collecting a
+call's storage access list and retrying the call with one candidate state override at a time;
+fvm-anvil needs honest FEVM access-list or storage-access tracing plus simulation state overrides
+before it can reproduce that behavior.
+
+`anvil_dumpState`, `anvil_loadState`, and `anvil_reset` also remain unsupported. Foundry's dump is a
+gzip-compressed serialization of its Ethereum database and block environment, not an FVM state
+format; fvm-anvil persistence must retain the writable IPLD overlay and adopted FVM root instead of
+claiming wire compatibility with that blob.
 
 WebSocket subscriptions, IPC, broader Anvil extensions, and general remote-chain forking remain
 deferred. State preparation with selected mainnet actors is provided by
@@ -334,8 +353,9 @@ upstream Anvil or fvm-anvil:
 RPC_URL=http://127.0.0.1:8545 tests/acceptance/run.sh
 ```
 
-It deploys a Paris-targeted Solidity fixture, reads and mutates contract state, validates its
-transaction, receipt, event, and block, and exercises nested snapshot/revert behavior. Set
+It exercises direct account balance, nonce, code, and storage controls, then deploys a
+Paris-targeted Solidity fixture, reads and mutates contract state, validates its transaction,
+receipt, event, and block, and exercises nested snapshot/revert behavior. Set
 `FILECOIN_ASSERTIONS=1` when targeting fvm-anvil to include Filecoin gas and canonical-index checks.
 
 ## Primary references in `extern`

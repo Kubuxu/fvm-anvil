@@ -18,9 +18,10 @@ use serde_json::{Value, json};
 
 pub use anvil_server::{ServerConfig, http_router};
 pub use wire::{
-    AccessListItem, AddressBlockParams, AnvilMineParams, BlockParams, CallParams, EvmMineParams,
-    FeeHistoryParams, HashBlockParams, LogFilterParams, One, QuantityU64, QuantityU256, RpcRequest,
-    StorageParams, StrictBytes, TransactionRequest,
+    AccessListItem, AddressBlockParams, AnvilBytes, AnvilMineParams, AnvilQuantity, BlockParams,
+    CallParams, EvmMineParams, FeeHistoryParams, HashBlockParams, LogFilterParams, One,
+    QuantityU64, QuantityU256, RpcRequest, StorageParams, StrictBytes, Three, TransactionRequest,
+    Two,
 };
 
 /// The client identifier returned by `web3_clientVersion`.
@@ -275,6 +276,36 @@ impl RpcService {
                 Ok(()) => ResponseResult::success(Value::Null),
                 Err(error) => node_error(error),
             },
+            RpcRequest::SetBalance { params } => {
+                match self.node.set_balance(params.0, params.1.0).await {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
+            RpcRequest::AddBalance { params } => {
+                match self.node.add_balance(params.0, params.1.0).await {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
+            RpcRequest::SetCode { params } => {
+                match self.node.set_code(params.0, params.1.0).await {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
+            RpcRequest::SetNonce { params } => {
+                match self.node.set_nonce(params.0, params.1.0).await {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
+            RpcRequest::SetStorageAt { params } => {
+                match self.node.set_storage(params.0, params.1.0, params.2).await {
+                    Ok(()) => ResponseResult::success(true),
+                    Err(error) => node_error(error),
+                }
+            }
             RpcRequest::FilecoinGetGasBreakdown { params } => {
                 match self.node.filecoin_gas_breakdown(params.0).await {
                     Ok(Some(breakdown)) => {
@@ -371,6 +402,19 @@ fn is_known_method(method: &str) -> bool {
             | "evm_mine"
             | "anvil_setAutomine"
             | "evm_setAutomine"
+            | "anvil_setBalance"
+            | "hardhat_setBalance"
+            | "tenderly_setBalance"
+            | "anvil_addBalance"
+            | "hardhat_addBalance"
+            | "tenderly_addBalance"
+            | "anvil_setCode"
+            | "hardhat_setCode"
+            | "anvil_setNonce"
+            | "hardhat_setNonce"
+            | "evm_setAccountNonce"
+            | "anvil_setStorageAt"
+            | "hardhat_setStorageAt"
             | "filecoin_getGasBreakdown"
             | "filecoin_getGasTrace"
             | "filecoin_getStateRoots"
@@ -408,6 +452,11 @@ fn static_response(request: &RpcRequest) -> Option<Value> {
         | RpcRequest::AnvilMine { .. }
         | RpcRequest::EvmMine { .. }
         | RpcRequest::SetAutomine { .. }
+        | RpcRequest::SetBalance { .. }
+        | RpcRequest::AddBalance { .. }
+        | RpcRequest::SetCode { .. }
+        | RpcRequest::SetNonce { .. }
+        | RpcRequest::SetStorageAt { .. }
         | RpcRequest::FilecoinGetGasBreakdown { .. }
         | RpcRequest::FilecoinGetGasTrace { .. }
         | RpcRequest::FilecoinGetStateRoots { .. } => None,
@@ -517,6 +566,19 @@ mod tests {
             ("evm_mine", json!([])),
             ("anvil_setAutomine", json!([false])),
             ("evm_setAutomine", json!([true])),
+            ("anvil_setBalance", json!([address, "0x2a"])),
+            ("hardhat_setBalance", json!([address, 42])),
+            ("tenderly_setBalance", json!([address, "42"])),
+            ("anvil_addBalance", json!([address, "0x1"])),
+            ("hardhat_addBalance", json!([address, 1])),
+            ("tenderly_addBalance", json!([address, "1"])),
+            ("anvil_setCode", json!([address, "0x6000"])),
+            ("hardhat_setCode", json!([address, ""])),
+            ("anvil_setNonce", json!([address, "0x7"])),
+            ("hardhat_setNonce", json!([address, 7])),
+            ("evm_setAccountNonce", json!([address, "7"])),
+            ("anvil_setStorageAt", json!([address, "0x0", hash])),
+            ("hardhat_setStorageAt", json!([address, 0, hash])),
             ("filecoin_getGasBreakdown", json!([hash])),
             ("filecoin_getGasTrace", json!([hash])),
             ("filecoin_getStateRoots", json!([])),
@@ -549,6 +611,55 @@ mod tests {
                 }))
                 .is_err(),
                 "unexpectedly accepted {params}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_modification_params_match_foundry_shapes() {
+        let address = address!("1111111111111111111111111111111111111111");
+        for (input, expected) in [
+            (json!("0x2a"), U256::from(42)),
+            (json!(42), U256::from(42)),
+            (json!("340282366920938463463374607431768211456"), U256::from(1_u8) << 128),
+        ] {
+            let RpcRequest::SetBalance { params: Two(actual_address, actual) } =
+                parse_json(json!({
+                    "method": "anvil_setBalance",
+                    "params": [address, input]
+                }))
+                .unwrap()
+            else {
+                panic!("parsed the wrong request");
+            };
+            assert_eq!(actual_address, address);
+            assert_eq!(actual.0, expected);
+        }
+
+        for code in ["", "0x", "0x6000"] {
+            let RpcRequest::SetCode { params: Two(actual_address, actual) } = parse_json(json!({
+                "method": "anvil_setCode",
+                "params": [address, code]
+            }))
+            .unwrap() else {
+                panic!("parsed the wrong request");
+            };
+            assert_eq!(actual_address, address);
+            assert_eq!(actual.0.is_empty(), code.len() <= 2);
+        }
+
+        let value = b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            parse_json(json!({
+                "method": "anvil_setStorageAt",
+                "params": [address, "0x0", value]
+            }))
+            .unwrap(),
+            RpcRequest::SetStorageAt { params: Three(address, AnvilQuantity(U256::ZERO), value) }
+        );
+        for params in [json!([]), json!([address]), json!([address, "0x0"]), json!({})] {
+            assert!(
+                parse_json(json!({ "method": "anvil_setStorageAt", "params": params })).is_err()
             );
         }
     }

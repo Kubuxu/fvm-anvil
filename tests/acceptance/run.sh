@@ -58,6 +58,34 @@ sender_nonce_before="$(cast nonce "$sender" --rpc-url "$RPC_URL")"
 block_number_before="$(cast block-number --rpc-url "$RPC_URL")"
 outer_snapshot="$(cast rpc --rpc-url "$RPC_URL" anvil_snapshot | jq -er '.')"
 
+state_target="0x1111111111111111111111111111111111111111"
+state_word="0x000000000000000000000000000000000000000000000000000000000000002a"
+state_snapshot="$(cast rpc --rpc-url "$RPC_URL" anvil_snapshot | jq -er '.')"
+cast rpc --rpc-url "$RPC_URL" hardhat_setBalance "$state_target" 0x29 >/dev/null
+cast rpc --rpc-url "$RPC_URL" anvil_addBalance "$state_target" 0x1 >/dev/null
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getBalance "$state_target" latest | jq -er '.')" \
+    "0x2a" "direct balance mutation"
+cast rpc --rpc-url "$RPC_URL" hardhat_setCode "$state_target" 0x60005460005260206000f3 \
+    >/dev/null
+cast rpc --rpc-url "$RPC_URL" evm_setAccountNonce "$state_target" 0x7 >/dev/null
+assert_eq \
+    "$(cast rpc --rpc-url "$RPC_URL" eth_getTransactionCount "$state_target" latest | jq -er '.')" \
+    "0x7" "direct EVM nonce mutation"
+assert_eq \
+    "$(cast rpc --rpc-url "$RPC_URL" hardhat_setStorageAt "$state_target" 0x0 "$state_word" | jq -er '.')" \
+    "true" "direct storage mutation response"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getStorageAt "$state_target" 0x0 latest | jq -er '.')" \
+    "$state_word" "direct storage mutation"
+assert_eq \
+    "$(cast rpc --rpc-url "$RPC_URL" eth_call "{\"to\":\"$state_target\",\"data\":\"0x\"}" latest | jq -er '.')" \
+    "$state_word" "direct code and storage behavior"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" anvil_revert "$state_snapshot" | jq -er '.')" \
+    "true" "direct state snapshot revert"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getBalance "$state_target" latest | jq -er '.')" \
+    "0x0" "direct balance revert"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" eth_getCode "$state_target" latest | jq -er '.')" \
+    "0x" "direct code revert"
+
 deployment="$({
     forge create \
         --root "$TEST_ROOT" \

@@ -106,6 +106,36 @@ impl NodeHandle {
         self.request(|reply| WorkerCommand::Storage { address, slot, selector, reply }).await
     }
 
+    /// Sets an account balance at the current canonical head.
+    pub async fn set_balance(&self, address: Address, balance: U256) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::SetBalance { address, balance, reply }).await
+    }
+
+    /// Saturating-adds to an account balance at the current canonical head.
+    pub async fn add_balance(&self, address: Address, amount: U256) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::AddBalance { address, amount, reply }).await
+    }
+
+    /// Sets the Ethereum-visible nonce at the current canonical head.
+    pub async fn set_nonce(&self, address: Address, nonce: U256) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::SetNonce { address, nonce, reply }).await
+    }
+
+    /// Sets deployed EVM bytecode at the current canonical head.
+    pub async fn set_code(&self, address: Address, code: Bytes) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::SetCode { address, code, reply }).await
+    }
+
+    /// Sets one EVM storage slot at the current canonical head.
+    pub async fn set_storage(
+        &self,
+        address: Address,
+        slot: U256,
+        value: B256,
+    ) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::SetStorage { address, slot, value, reply }).await
+    }
+
     pub async fn logs(&self, filter: LogFilter) -> Result<Vec<Log>, NodeError> {
         self.request(|reply| WorkerCommand::Logs { filter, reply }).await
     }
@@ -286,6 +316,32 @@ enum WorkerCommand {
         selector: BlockSelector,
         reply: Reply<B256>,
     },
+    SetBalance {
+        address: Address,
+        balance: U256,
+        reply: Reply<()>,
+    },
+    AddBalance {
+        address: Address,
+        amount: U256,
+        reply: Reply<()>,
+    },
+    SetNonce {
+        address: Address,
+        nonce: U256,
+        reply: Reply<()>,
+    },
+    SetCode {
+        address: Address,
+        code: Bytes,
+        reply: Reply<()>,
+    },
+    SetStorage {
+        address: Address,
+        slot: U256,
+        value: B256,
+        reply: Reply<()>,
+    },
     Logs {
         filter: LogFilter,
         reply: Reply<Vec<Log>>,
@@ -391,6 +447,21 @@ fn run_worker(
             }
             WorkerCommand::Storage { address, slot, selector, reply } => {
                 let _ = reply.send(runtime.storage(address, slot, selector));
+            }
+            WorkerCommand::SetBalance { address, balance, reply } => {
+                let _ = reply.send(runtime.set_balance(address, balance));
+            }
+            WorkerCommand::AddBalance { address, amount, reply } => {
+                let _ = reply.send(runtime.add_balance(address, amount));
+            }
+            WorkerCommand::SetNonce { address, nonce, reply } => {
+                let _ = reply.send(runtime.set_nonce(address, nonce));
+            }
+            WorkerCommand::SetCode { address, code, reply } => {
+                let _ = reply.send(runtime.set_code(address, code));
+            }
+            WorkerCommand::SetStorage { address, slot, value, reply } => {
+                let _ = reply.send(runtime.set_storage(address, slot, value));
             }
             WorkerCommand::Logs { filter, reply } => {
                 let _ = reply.send(runtime.logs(filter));
@@ -701,5 +772,49 @@ mod tests {
         assert!(handle.transaction_by_hash(restored_second).await.unwrap().is_none());
         assert!(handle.transaction_receipt(restored_first).await.unwrap().is_none());
         assert!(handle.transaction_receipt(restored_second).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FVM_ANVIL_ACTOR_BUNDLE to point to the official builtin-actors v18 mainnet CAR"]
+    async fn direct_state_modifications_are_evm_visible_and_snapshot_aware() {
+        let service = real_service();
+        let handle = service.handle();
+        let target = Address::from([0x11; 20]);
+        let snapshot = handle.snapshot().await.unwrap();
+        let initial_root = handle.filecoin_state_roots().await.unwrap().current;
+
+        handle.set_balance(target, U256::from(10)).await.unwrap();
+        handle.add_balance(target, U256::MAX).await.unwrap();
+        assert_eq!(handle.balance(target, BlockSelector::Latest).await.unwrap(), U256::MAX);
+
+        let code = Bytes::from_static(&hex!("60005460005260206000f3"));
+        handle.set_code(target, code.clone()).await.unwrap();
+        handle.set_nonce(target, U256::from(7)).await.unwrap();
+        let stored = B256::from(U256::from(42));
+        handle.set_storage(target, U256::ZERO, stored).await.unwrap();
+
+        assert_eq!(handle.code(target, BlockSelector::Latest).await.unwrap(), code);
+        assert_eq!(handle.transaction_count(target, BlockSelector::Latest).await.unwrap(), 7);
+        assert_eq!(handle.transaction_count(target, BlockSelector::Pending).await.unwrap(), 7);
+        assert_eq!(
+            handle.storage(target, U256::ZERO, BlockSelector::Latest).await.unwrap(),
+            stored
+        );
+        let output = handle
+            .call(CallRequest { to: Some(target), ..CallRequest::default() }, BlockSelector::Latest)
+            .await
+            .unwrap();
+        assert_eq!(output.as_ref(), stored.as_slice());
+        assert_ne!(handle.filecoin_state_roots().await.unwrap().current, initial_root);
+        assert!(handle.code(target, BlockSelector::Earliest).await.unwrap().is_empty());
+
+        assert!(handle.revert(snapshot).await.unwrap());
+        assert_eq!(handle.filecoin_state_roots().await.unwrap().current, initial_root);
+        assert_eq!(handle.balance(target, BlockSelector::Latest).await.unwrap(), U256::ZERO);
+        assert!(handle.code(target, BlockSelector::Latest).await.unwrap().is_empty());
+        assert_eq!(
+            handle.storage(target, U256::ZERO, BlockSelector::Latest).await.unwrap(),
+            B256::ZERO
+        );
     }
 }

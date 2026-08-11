@@ -1,5 +1,5 @@
 pub mod archive;
-mod evm;
+pub mod evm;
 pub mod forest_car;
 pub mod prepared;
 pub mod snapshot;

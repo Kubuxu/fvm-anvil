@@ -10,8 +10,9 @@ preparation and prepared-state import are documented in [`docs/press.md`](press.
 ## Current status
 
 The executable transaction path, HTTP RPC transport, synthetic canonical chain, instant/manual/
-interval/mixed startup mining, snapshots, Filecoin gas diagnostics, deterministic development
-accounts, and prepared-state import are implemented.
+interval/mixed startup mining, snapshots, direct account balance/nonce/code/storage controls,
+Filecoin gas diagnostics, deterministic development accounts, and prepared-state import are
+implemented.
 
 Remaining work is broader Anvil development-control compatibility and writable-overlay persistence.
 The authoritative implemented RPC list is in
@@ -35,16 +36,18 @@ fvm-anvil                 CLI, configuration, process lifetime, and graceful shu
         └── fvm-anvil-state
 ```
 
-Protocol types belong to the lowest crate that owns their invariants. The state crate exists for the
-demonstrated on-disk format boundary shared by `press` and the node; it does not own live execution.
+Protocol types belong to the lowest crate that owns their invariants. The state crate owns the
+demonstrated on-disk format boundary and the versioned builtin-actors state adapters shared by
+`press` and the node; the node remains the sole owner of a live mutable root.
 
 Production crates must not depend on Forest, `anvil-core`, the main `anvil` crate, `revm`, or the
 ref-FVM integration harness. Forest, Foundry, ref-FVM integration tests, and builtin actor sources
 under `extern/` are read-only behavioral references.
 
 Actor Wasm and code CIDs come from the selected CAR bundle. Production code does not depend on
-individual builtin actor crates; it adapts only the minimal serialized v18 state representations
-needed for genesis, with attribution and explicit schema tests.
+individual builtin actor crates; `fvm-anvil-state` adapts only the minimal serialized v18 state
+representations needed for genesis, prepared-state patching, and direct EVM mutation, with
+attribution and explicit schema tests.
 
 ## Component ownership
 
@@ -143,6 +146,7 @@ Current semantic operations are:
 - Snapshot creation and revert.
 - Automine control.
 - Filecoin gas breakdown, call trace, and state-root queries.
+- Current-root balance, nonce, EVM bytecode, and EVM storage mutation.
 
 `NodeError` retains stable semantic categories; only the RPC crate maps them to JSON-RPC errors.
 
@@ -161,21 +165,25 @@ state. Transactions mined in the removed suffix are not automatically reinserted
 
 ### Broader development controls
 
-Implement time controls, fee/FIFO transaction ordering, pool inspection and removal, and balance and
-nonce controls. Each method needs exact Foundry wire-format comparison, a public JSON-RPC
-compatibility case, and a real endpoint smoke test.
+Implement time controls, fee/FIFO transaction ordering, and pool inspection and removal. Each
+method needs exact Foundry wire-format comparison, a public JSON-RPC compatibility case, and a real
+endpoint smoke test.
 
 Runtime mining controls must have one timer owner. A call that changes automine or interval behavior
 must take ownership away from the startup scheduler; snapshot/revert must not restore process-control
 state.
 
-### Versioned direct EVM state controls
+### ERC-20 state controls
 
-Implement a private builtin-actors v18 state adapter, then `anvil_setCode`,
-`anvil_setStorageAt`, ERC-20 balance probing, and allowance probing in that dependency order.
-Direct mutations must publish a new current FVM root, participate in snapshots, preserve unaffected
-actor fields, and be verified through public EVM behavior. Every state-schema test names the actor
-bundle and network version explicitly.
+The shared builtin-actors v18 adapter now serves both Press patches and live
+`anvil_setCode`/`anvil_setStorageAt` mutations. Direct mutations publish a new current FVM root,
+participate in snapshots, preserve unaffected actor fields, and are verified through public EVM
+behavior. Every state-schema test names the actor bundle and network version explicitly.
+
+ERC-20 balance and allowance helpers remain dependent on FEVM storage-access discovery and
+simulation state overrides. Foundry discovers candidates from `eth_createAccessList`, overrides one
+slot at a time, and accepts the slot whose call result equals the requested value; fixed Solidity
+layout guesses are not an acceptable replacement.
 
 Local `--actor-bundle` inputs remain a genesis-time development choice. The user is responsible for
 selecting a bundle compatible with the v18 state adapter.

@@ -105,7 +105,7 @@ struct TombstoneV18 {
 }
 
 #[derive(Clone, Debug, Deserialize_tuple, Serialize_tuple)]
-struct EvmStateV18 {
+pub struct EvmStateV18 {
     bytecode: Cid,
     bytecode_hash: BytecodeHashV18,
     contract_state: Cid,
@@ -151,8 +151,26 @@ pub(crate) struct EvmStateView {
     pub contract_state: Cid,
 }
 
+/// One bytecode replacement applied to builtin-actors v18 EVM state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EvmBytecodeUpdate {
+    pub previous: Cid,
+    pub previous_hash: [u8; 32],
+    pub replacement: Cid,
+    pub replacement_hash: [u8; 32],
+}
+
+/// One storage replacement applied to builtin-actors v18 EVM state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EvmStorageUpdate {
+    pub key: [u8; 32],
+    pub previous: [u8; 32],
+    pub replacement: [u8; 32],
+}
+
+/// Errors while reading or mutating builtin-actors v18 EVM state.
 #[derive(Debug, Error)]
-pub(crate) enum EvmPatchError {
+pub enum EvmPatchError {
     #[error("actor code {0} is not builtin-actors v18 EVM code")]
     NotEvmActor(Box<Cid>),
     #[error("EVM state block {0} is missing")]
@@ -167,6 +185,177 @@ pub(crate) enum EvmPatchError {
     Bytecode(String),
     #[error("failed to patch EVM storage: {0}")]
     Storage(String),
+}
+
+impl EvmStateV18 {
+    /// Loads builtin-actors v18 EVM state from its state root.
+    pub fn load<BS: Blockstore>(store: &BS, state_root: &Cid) -> Result<Self, EvmPatchError> {
+        store
+            .get_cbor::<Self>(state_root)
+            .map_err(|error| EvmPatchError::State {
+                state: Box::new(*state_root),
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| EvmPatchError::MissingState(Box::new(*state_root)))
+    }
+
+    /// Creates new builtin-actors v18 EVM state with empty storage.
+    pub fn create<BS: Blockstore>(
+        store: &BS,
+        bytecode: &[u8],
+        nonce: u64,
+    ) -> Result<Self, EvmPatchError> {
+        let (bytecode, bytecode_hash) = write_bytecode(store, bytecode)?;
+        let mut slots = EvmStateKamtV18::new_with_config(store, EVM_STATE_KAMT_CONFIG_V18.clone());
+        let contract_state =
+            slots.flush().map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+        Ok(Self {
+            bytecode,
+            bytecode_hash: BytecodeHashV18(bytecode_hash),
+            contract_state,
+            transient_data: None,
+            nonce,
+            tombstone: None,
+        })
+    }
+
+    pub const fn bytecode(&self) -> Cid {
+        self.bytecode
+    }
+
+    pub const fn bytecode_hash(&self) -> [u8; 32] {
+        self.bytecode_hash.0
+    }
+
+    pub const fn contract_state(&self) -> Cid {
+        self.contract_state
+    }
+
+    pub const fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    pub const fn set_nonce(&mut self, nonce: u64) {
+        self.nonce = nonce;
+    }
+
+    /// Replaces bytecode without deployment-time validation.
+    pub fn replace_bytecode<BS: Blockstore>(
+        &mut self,
+        store: &BS,
+        replacement: &[u8],
+    ) -> Result<EvmBytecodeUpdate, EvmPatchError> {
+        let previous = self.bytecode;
+        let previous_hash = self.bytecode_hash.0;
+        let (replacement, replacement_hash) = write_bytecode(store, replacement)?;
+        self.bytecode = replacement;
+        self.bytecode_hash = BytecodeHashV18(replacement_hash);
+        Ok(EvmBytecodeUpdate { previous, previous_hash, replacement, replacement_hash })
+    }
+
+    /// Clears a persisted self-destruct marker when direct code mutation resurrects an account.
+    pub fn clear_tombstone(&mut self) {
+        self.tombstone = None;
+    }
+
+    /// Replaces storage slots and returns their previous values.
+    pub fn replace_storage<BS: Blockstore>(
+        &mut self,
+        store: &BS,
+        replacements: &BTreeMap<[u8; 32], [u8; 32]>,
+    ) -> Result<Vec<EvmStorageUpdate>, EvmPatchError> {
+        if replacements.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut slots = EvmStateKamtV18::load_with_config(
+            &self.contract_state,
+            store,
+            EVM_STATE_KAMT_CONFIG_V18.clone(),
+        )
+        .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+        let mut updates = Vec::with_capacity(replacements.len());
+        for (key, replacement) in replacements {
+            updates.push(replace_storage_value(&mut slots, *key, *replacement)?);
+        }
+        self.contract_state =
+            slots.flush().map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+        Ok(updates)
+    }
+
+    /// Replaces one storage slot without allocating a temporary collection.
+    pub fn replace_storage_slot<BS: Blockstore>(
+        &mut self,
+        store: &BS,
+        key: [u8; 32],
+        replacement: [u8; 32],
+    ) -> Result<EvmStorageUpdate, EvmPatchError> {
+        let mut slots = EvmStateKamtV18::load_with_config(
+            &self.contract_state,
+            store,
+            EVM_STATE_KAMT_CONFIG_V18.clone(),
+        )
+        .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+        let update = replace_storage_value(&mut slots, key, replacement)?;
+        self.contract_state =
+            slots.flush().map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+        Ok(update)
+    }
+
+    /// Reads one storage slot from this state's current storage root.
+    pub fn storage<BS: Blockstore>(
+        &self,
+        store: &BS,
+        key: [u8; 32],
+    ) -> Result<[u8; 32], EvmPatchError> {
+        read_storage(store, &self.contract_state, key)
+    }
+
+    /// Persists the state tuple and returns its new root.
+    pub fn flush<BS: Blockstore>(
+        &self,
+        store: &BS,
+        previous_root: &Cid,
+    ) -> Result<Cid, EvmPatchError> {
+        store.put_cbor(self, Code::Blake2b256).map_err(|error| EvmPatchError::State {
+            state: Box::new(*previous_root),
+            message: error.to_string(),
+        })
+    }
+}
+
+fn replace_storage_value<BS: Blockstore>(
+    slots: &mut EvmStateKamtV18<BS>,
+    key: [u8; 32],
+    replacement: [u8; 32],
+) -> Result<EvmStorageUpdate, EvmPatchError> {
+    let key_word = EvmWordV18(U256::from_be_bytes(key));
+    let previous = slots
+        .get(&key_word)
+        .map_err(|error| EvmPatchError::Storage(error.to_string()))?
+        .copied()
+        .unwrap_or_default()
+        .0
+        .to_be_bytes();
+    let replacement_word = EvmWordV18(U256::from_be_bytes(replacement));
+    if replacement_word.0.is_zero() {
+        slots.delete(&key_word).map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+    } else {
+        slots
+            .set(key_word, replacement_word)
+            .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
+    }
+    Ok(EvmStorageUpdate { key, previous, replacement })
+}
+
+fn write_bytecode<BS: Blockstore>(
+    store: &BS,
+    bytecode: &[u8],
+) -> Result<(Cid, [u8; 32]), EvmPatchError> {
+    let hash = keccak256(bytecode).0;
+    let cid = store
+        .put(Code::Blake2b256, &Block::new(IPLD_RAW, bytecode))
+        .map_err(|error| EvmPatchError::Bytecode(error.to_string()))?;
+    Ok((cid, hash))
 }
 
 pub(crate) fn is_evm_actor_code(code: &Cid) -> bool {
@@ -195,78 +384,42 @@ pub(crate) fn apply_evm_patch<BS: Blockstore>(
         return Err(EvmPatchError::NotEvmActor(Box::new(*actor_code)));
     }
     let store = PatchStore { source, output };
-    let mut state = load_state(&store, state_root)?;
+    let mut state = EvmStateV18::load(&store, state_root)?;
 
-    let runtime_code = if let Some(replacement) = runtime_code {
-        validate_runtime_code(replacement)?;
-        let replacement_hash = keccak256(replacement).0;
-        let replacement_cid = store
-            .put(Code::Blake2b256, &Block::new(IPLD_RAW, replacement))
-            .map_err(|error| EvmPatchError::Bytecode(error.to_string()))?;
-        let patch = PreparedBytecodePatch {
-            source: state.bytecode,
-            source_hash: state.bytecode_hash.0.to_vec(),
-            replacement: replacement_cid,
-            replacement_hash: replacement_hash.to_vec(),
-        };
-        state.bytecode = replacement_cid;
-        state.bytecode_hash = BytecodeHashV18(replacement_hash);
-        Some(patch)
-    } else {
-        None
-    };
-
-    let mut applied_storage = Vec::with_capacity(storage.len());
-    if !storage.is_empty() {
-        let mut slots = EvmStateKamtV18::load_with_config(
-            &state.contract_state,
-            store.clone(),
-            EVM_STATE_KAMT_CONFIG_V18,
-        )
-        .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
-        for (key, replacement) in storage {
-            let key_word = EvmWordV18(U256::from_be_bytes(*key));
-            let source = slots
-                .get(&key_word)
-                .map_err(|error| EvmPatchError::Storage(error.to_string()))?
-                .copied()
-                .unwrap_or_default();
-            let replacement_word = EvmWordV18(U256::from_be_bytes(*replacement));
-            if replacement_word.0.is_zero() {
-                slots
-                    .delete(&key_word)
-                    .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
-            } else {
-                slots
-                    .set(key_word, replacement_word)
-                    .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
-            }
-            applied_storage.push(PreparedStoragePatch {
-                key: key.to_vec(),
-                source: source.0.to_be_bytes::<32>().to_vec(),
-                replacement: replacement.to_vec(),
-            });
-        }
-        state.contract_state =
-            slots.flush().map_err(|error| EvmPatchError::Storage(error.to_string()))?;
-    }
-
-    let state = store.put_cbor(&state, Code::Blake2b256).map_err(|error| EvmPatchError::State {
-        state: Box::new(*state_root),
-        message: error.to_string(),
-    })?;
-    Ok(AppliedEvmPatch { state, runtime_code, storage: applied_storage })
+    let runtime_code = runtime_code
+        .map(|replacement| {
+            validate_runtime_code(replacement)?;
+            let update = state.replace_bytecode(&store, replacement)?;
+            Ok(PreparedBytecodePatch {
+                source: update.previous,
+                source_hash: update.previous_hash.to_vec(),
+                replacement: update.replacement,
+                replacement_hash: update.replacement_hash.to_vec(),
+            })
+        })
+        .transpose()?;
+    let storage = state
+        .replace_storage(&store, storage)?
+        .into_iter()
+        .map(|update| PreparedStoragePatch {
+            key: update.key.to_vec(),
+            source: update.previous.to_vec(),
+            replacement: update.replacement.to_vec(),
+        })
+        .collect();
+    let state = state.flush(&store, state_root)?;
+    Ok(AppliedEvmPatch { state, runtime_code, storage })
 }
 
 pub(crate) fn inspect_evm_state(
     store: &impl Blockstore,
     state_root: &Cid,
 ) -> Result<EvmStateView, EvmPatchError> {
-    let state = load_state(store, state_root)?;
+    let state = EvmStateV18::load(store, state_root)?;
     Ok(EvmStateView {
-        bytecode: state.bytecode,
-        bytecode_hash: state.bytecode_hash.0,
-        contract_state: state.contract_state,
+        bytecode: state.bytecode(),
+        bytecode_hash: state.bytecode_hash(),
+        contract_state: state.contract_state(),
     })
 }
 
@@ -285,15 +438,6 @@ pub(crate) fn read_storage(
     Ok(value.0.to_be_bytes())
 }
 
-fn load_state<BS: Blockstore>(store: &BS, state_root: &Cid) -> Result<EvmStateV18, EvmPatchError> {
-    store
-        .get_cbor::<EvmStateV18>(state_root)
-        .map_err(|error| EvmPatchError::State {
-            state: Box::new(*state_root),
-            message: error.to_string(),
-        })?
-        .ok_or_else(|| EvmPatchError::MissingState(Box::new(*state_root)))
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +485,7 @@ mod tests {
         )
         .unwrap();
         let store = PatchStore { source: source.as_ref(), output };
-        let state = load_state(&store, &applied.state).unwrap();
+        let state = EvmStateV18::load(&store, &applied.state).unwrap();
 
         assert_eq!(state.nonce, 9);
         assert_eq!(state.bytecode_hash.0, keccak256(replacement_code).0);

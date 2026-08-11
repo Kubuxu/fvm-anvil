@@ -99,6 +99,24 @@ pub enum RpcRequest {
     },
     #[serde(rename = "anvil_setAutomine", alias = "evm_setAutomine")]
     SetAutomine { params: One<bool> },
+    #[serde(
+        rename = "anvil_setBalance",
+        alias = "hardhat_setBalance",
+        alias = "tenderly_setBalance"
+    )]
+    SetBalance { params: Two<Address, AnvilQuantity> },
+    #[serde(
+        rename = "anvil_addBalance",
+        alias = "hardhat_addBalance",
+        alias = "tenderly_addBalance"
+    )]
+    AddBalance { params: Two<Address, AnvilQuantity> },
+    #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
+    SetCode { params: Two<Address, AnvilBytes> },
+    #[serde(rename = "anvil_setNonce", alias = "hardhat_setNonce", alias = "evm_setAccountNonce")]
+    SetNonce { params: Two<Address, AnvilQuantity> },
+    #[serde(rename = "anvil_setStorageAt", alias = "hardhat_setStorageAt")]
+    SetStorageAt { params: Three<Address, AnvilQuantity, B256> },
     #[serde(rename = "filecoin_getGasBreakdown")]
     FilecoinGetGasBreakdown { params: One<B256> },
     #[serde(rename = "filecoin_getGasTrace")]
@@ -131,6 +149,62 @@ where
         deserialize_value(values.into_iter().next().expect("length checked"))
             .map(Self)
             .map_err(de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Two<A, B>(pub A, pub B);
+
+impl<'de, A, B> Deserialize<'de> for Two<A, B>
+where
+    A: DeserializeOwned,
+    B: DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let values = params_array(Value::deserialize(deserializer)?).map_err(de::Error::custom)?;
+        let [first, second]: [Value; 2] = values.try_into().map_err(|values: Vec<Value>| {
+            de::Error::custom(format_args!(
+                "expected exactly 2 positional parameters, got {}",
+                values.len()
+            ))
+        })?;
+        Ok(Self(
+            deserialize_value(first).map_err(de::Error::custom)?,
+            deserialize_value(second).map_err(de::Error::custom)?,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Three<A, B, C>(pub A, pub B, pub C);
+
+impl<'de, A, B, C> Deserialize<'de> for Three<A, B, C>
+where
+    A: DeserializeOwned,
+    B: DeserializeOwned,
+    C: DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+        C: DeserializeOwned,
+    {
+        let values = params_array(Value::deserialize(deserializer)?).map_err(de::Error::custom)?;
+        let [first, second, third]: [Value; 3] =
+            values.try_into().map_err(|values: Vec<Value>| {
+                de::Error::custom(format_args!(
+                    "expected exactly 3 positional parameters, got {}",
+                    values.len()
+                ))
+            })?;
+        Ok(Self(
+            deserialize_value(first).map_err(de::Error::custom)?,
+            deserialize_value(second).map_err(de::Error::custom)?,
+            deserialize_value(third).map_err(de::Error::custom)?,
+        ))
     }
 }
 
@@ -555,6 +629,58 @@ impl<'de> Deserialize<'de> for EvmMineParams {
             value => parse_u64_input(value.clone(), "timestamp")
                 .map(|timestamp| Self { count: 1, timestamp: Some(timestamp) })
                 .map_err(de::Error::custom),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnvilBytes(pub Bytes);
+
+impl<'de> Deserialize<'de> for AnvilBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let text = String::deserialize(deserializer)?;
+        if text.is_empty() {
+            return Ok(Self(Bytes::new()));
+        }
+        let digits = text
+            .strip_prefix("0x")
+            .ok_or_else(|| de::Error::custom("bytes must be empty or have a 0x prefix"))?;
+        if digits.len() % 2 != 0 {
+            return Err(de::Error::custom("bytes must contain an even number of hex digits"));
+        }
+        if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(de::Error::custom("bytes contain a non-hex digit"));
+        }
+        hex::decode(digits).map(Bytes::from).map(Self).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnvilQuantity(pub U256);
+
+impl<'de> Deserialize<'de> for AnvilQuantity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Value::deserialize(deserializer)? {
+            Value::String(text) => {
+                let (digits, radix) =
+                    text.strip_prefix("0x").map_or((text.as_str(), 10), |digits| (digits, 16));
+                if digits.is_empty() {
+                    return Err(de::Error::custom("number must contain at least one digit"));
+                }
+                U256::from_str_radix(digits, radix).map(Self).map_err(de::Error::custom)
+            }
+            Value::Number(number) => {
+                number.as_u64().map(U256::from).map(Self).ok_or_else(|| {
+                    de::Error::custom("JSON number must be an unsigned 64-bit integer")
+                })
+            }
+            _ => Err(de::Error::custom("number must be a hex or decimal string or JSON integer")),
         }
     }
 }
