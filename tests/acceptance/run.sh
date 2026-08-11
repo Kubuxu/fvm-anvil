@@ -9,6 +9,7 @@ FILECOIN_ASSERTIONS="${FILECOIN_ASSERTIONS:-0}"
 INITIAL_VALUE=41
 UPDATED_VALUE=99
 CONTRACT="src/NarrowSlice.sol:NarrowSlice"
+TOKEN_CONTRACT="src/ProbeToken.sol:ProbeToken"
 
 export NO_COLOR=1
 export TERM=dumb
@@ -110,6 +111,82 @@ code="$(cast code "$contract_address" --rpc-url "$RPC_URL")"
 [[ "$code" != "0x" ]] || fail "deployed contract has no bytecode"
 assert_eq "$(cast call "$contract_address" 'value()(uint256)' --rpc-url "$RPC_URL")" \
     "$INITIAL_VALUE" "constructor state"
+
+token_deployment="$({
+    forge create \
+        --root "$TEST_ROOT" \
+        --broadcast \
+        --json \
+        --rpc-url "$RPC_URL" \
+        --private-key "$PRIVATE_KEY" \
+        "$TOKEN_CONTRACT" \
+        --constructor-args "$sender"
+})"
+token_address="$(json_field "$token_deployment" '.deployedTo')"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$sender" --rpc-url "$RPC_URL")" \
+    "1000" "ERC-20 constructor balance"
+
+token_snapshot="$(cast rpc --rpc-url "$RPC_URL" anvil_snapshot | jq -er '.')"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" hardhat_dealERC20 "$sender" "$token_address" 500)" \
+    "null" "hardhat ERC-20 deal result"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" anvil_dealERC20 "$sender" "$token_address" 500)" \
+    "null" "Anvil ERC-20 deal no-op result"
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" anvil_setERC20Balance "$sender" "$token_address" 500)" \
+    "null" "Anvil ERC-20 balance no-op result"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$sender" --rpc-url "$RPC_URL")" \
+    "500" "modified ERC-20 balance"
+
+token_transfer="$(
+    cast send \
+        "$token_address" \
+        'transfer(address,uint256)' \
+        "$state_target" \
+        50 \
+        --private-key "$PRIVATE_KEY" \
+        --json \
+        --rpc-url "$RPC_URL"
+)"
+assert_eq "$(json_field "$token_transfer" '.status')" "0x1" "ERC-20 transfer status"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$sender" --rpc-url "$RPC_URL")" \
+    "450" "ERC-20 balance after transfer"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$state_target" --rpc-url "$RPC_URL")" \
+    "50" "ERC-20 recipient balance after transfer"
+
+assert_eq \
+    "$(cast rpc --rpc-url "$RPC_URL" anvil_setERC20Allowance "$sender" "$sender" "$token_address" 75)" \
+    "null" "Anvil ERC-20 allowance result"
+assert_eq \
+    "$(cast call "$token_address" 'allowance(address,address)(uint256)' "$sender" "$sender" --rpc-url "$RPC_URL")" \
+    "75" "modified ERC-20 allowance"
+token_transfer_from="$(
+    cast send \
+        "$token_address" \
+        'transferFrom(address,address,uint256)' \
+        "$sender" \
+        "$state_target" \
+        25 \
+        --private-key "$PRIVATE_KEY" \
+        --json \
+        --rpc-url "$RPC_URL"
+)"
+assert_eq "$(json_field "$token_transfer_from" '.status')" "0x1" "ERC-20 transferFrom status"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$sender" --rpc-url "$RPC_URL")" \
+    "425" "ERC-20 balance after transferFrom"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$state_target" --rpc-url "$RPC_URL")" \
+    "75" "ERC-20 recipient balance after transferFrom"
+assert_eq \
+    "$(cast call "$token_address" 'allowance(address,address)(uint256)' "$sender" "$sender" --rpc-url "$RPC_URL")" \
+    "50" "ERC-20 allowance after transferFrom"
+
+assert_eq "$(cast rpc --rpc-url "$RPC_URL" anvil_revert "$token_snapshot")" "true" \
+    "ERC-20 snapshot revert"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$sender" --rpc-url "$RPC_URL")" \
+    "1000" "ERC-20 balance after revert"
+assert_eq "$(cast call "$token_address" 'balanceOf(address)(uint256)' "$state_target" --rpc-url "$RPC_URL")" \
+    "0" "ERC-20 recipient balance after revert"
+assert_eq \
+    "$(cast call "$token_address" 'allowance(address,address)(uint256)' "$sender" "$sender" --rpc-url "$RPC_URL")" \
+    "0" "ERC-20 allowance after revert"
 
 inner_snapshot="$(cast rpc --rpc-url "$RPC_URL" anvil_snapshot | jq -er '.')"
 nonce_before_mutation="$(cast nonce "$sender" --rpc-url "$RPC_URL")"

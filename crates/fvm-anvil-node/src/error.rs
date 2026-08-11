@@ -97,6 +97,12 @@ pub enum NodeError {
     MalformedEvmState { address: Address, state: Box<Cid>, detail: String },
     #[error("EVM actor {address} has malformed contract storage {root}: {detail}")]
     MalformedEvmStorage { address: Address, root: Box<Cid>, detail: String },
+    #[error("ERC-20 token {token} is not a live EVM actor")]
+    Erc20TokenNotEvm { token: Address },
+    #[error("ERC-20 {field} call on token {token} returned {length} bytes; expected 32")]
+    MalformedErc20Return { token: Address, field: &'static str, length: usize },
+    #[error("unable to find ERC-20 {field} storage slot for token {token}")]
+    Erc20StorageSlotNotFound { token: Address, field: &'static str },
     #[error("mine block count must be at least one, found {0}")]
     InvalidMineCount(u64),
     #[error("mining {field} arithmetic overflow")]

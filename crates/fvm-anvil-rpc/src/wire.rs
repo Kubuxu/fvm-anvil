@@ -117,6 +117,12 @@ pub enum RpcRequest {
     SetNonce { params: Two<Address, AnvilQuantity> },
     #[serde(rename = "anvil_setStorageAt", alias = "hardhat_setStorageAt")]
     SetStorageAt { params: Three<Address, AnvilQuantity, B256> },
+    #[serde(rename = "anvil_dealERC20", alias = "hardhat_dealERC20")]
+    DealErc20 { params: Three<Address, Address, AnvilQuantity> },
+    #[serde(rename = "anvil_setERC20Balance")]
+    SetErc20Balance { params: Three<Address, Address, AnvilQuantity> },
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetErc20Allowance { params: Four<Address, Address, Address, AnvilQuantity> },
     #[serde(rename = "filecoin_getGasBreakdown")]
     FilecoinGetGasBreakdown { params: One<B256> },
     #[serde(rename = "filecoin_getGasTrace")]
@@ -204,6 +210,37 @@ where
             deserialize_value(first).map_err(de::Error::custom)?,
             deserialize_value(second).map_err(de::Error::custom)?,
             deserialize_value(third).map_err(de::Error::custom)?,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Four<A, B, C, D>(pub A, pub B, pub C, pub D);
+
+impl<'de, A, B, C, D> Deserialize<'de> for Four<A, B, C, D>
+where
+    A: DeserializeOwned,
+    B: DeserializeOwned,
+    C: DeserializeOwned,
+    D: DeserializeOwned,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        let values = params_array(Value::deserialize(deserializer)?).map_err(de::Error::custom)?;
+        let [first, second, third, fourth]: [Value; 4] =
+            values.try_into().map_err(|values: Vec<Value>| {
+                de::Error::custom(format_args!(
+                    "expected exactly 4 positional parameters, got {}",
+                    values.len()
+                ))
+            })?;
+        Ok(Self(
+            deserialize_value(first).map_err(de::Error::custom)?,
+            deserialize_value(second).map_err(de::Error::custom)?,
+            deserialize_value(third).map_err(de::Error::custom)?,
+            deserialize_value(fourth).map_err(de::Error::custom)?,
         ))
     }
 }

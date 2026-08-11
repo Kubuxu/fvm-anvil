@@ -1,7 +1,7 @@
 # fvm-anvil implementation plan
 
 Status: active  
-Last updated: 2026-08-05
+Last updated: 2026-08-11
 
 This document records current component ownership and remaining implementation work. Design
 rationale and compatibility constraints live in [`docs/design.md`](design.md). Offline state
@@ -175,15 +175,16 @@ state.
 
 ### ERC-20 state controls
 
-The shared builtin-actors v18 adapter now serves both Press patches and live
-`anvil_setCode`/`anvil_setStorageAt` mutations. Direct mutations publish a new current FVM root,
-participate in snapshots, preserve unaffected actor fields, and are verified through public EVM
-behavior. Every state-schema test names the actor bundle and network version explicitly.
+The shared builtin-actors v18 adapter serves Press patches and live code, storage, ERC-20 balance,
+and ERC-20 allowance mutations. Direct mutations publish a new current FVM root, participate in
+snapshots, preserve unaffected actor fields, and are verified through public EVM behavior. Every
+state-schema test names the actor bundle and network version explicitly.
 
-ERC-20 balance and allowance helpers remain dependent on FEVM storage-access discovery and
-simulation state overrides. Foundry discovers candidates from `eth_createAccessList`, overrides one
-slot at a time, and accepts the slot whose call result equals the requested value; fixed Solidity
-layout guesses are not an acceptable replacement.
+The ERC-20 controls search standard Solidity mapping base slots `0..=255`. Each candidate is applied
+to an ephemeral FVM root and accepted only when the official EVM actor's `balanceOf` or `allowance`
+result equals the requested value. Only the validated slot is committed. Nonstandard storage
+layouts remain unsupported and fail without publishing a candidate root; storage-access tracing
+would be required for general layout discovery.
 
 Local `--actor-bundle` inputs remain a genesis-time development choice. The user is responsible for
 selecting a bundle compatible with the v18 state adapter.

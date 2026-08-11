@@ -136,6 +136,34 @@ impl NodeHandle {
         self.request(|reply| WorkerCommand::SetStorage { address, slot, value, reply }).await
     }
 
+    /// Discovers and sets a standard Solidity ERC-20 balance slot.
+    pub async fn deal_erc20(
+        &self,
+        account: Address,
+        token: Address,
+        balance: U256,
+    ) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::DealErc20 { account, token, balance, reply }).await
+    }
+
+    /// Discovers and sets a standard Solidity ERC-20 allowance slot.
+    pub async fn set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token: Address,
+        amount: U256,
+    ) -> Result<(), NodeError> {
+        self.request(|reply| WorkerCommand::SetErc20Allowance {
+            owner,
+            spender,
+            token,
+            amount,
+            reply,
+        })
+        .await
+    }
+
     pub async fn logs(&self, filter: LogFilter) -> Result<Vec<Log>, NodeError> {
         self.request(|reply| WorkerCommand::Logs { filter, reply }).await
     }
@@ -342,6 +370,19 @@ enum WorkerCommand {
         value: B256,
         reply: Reply<()>,
     },
+    DealErc20 {
+        account: Address,
+        token: Address,
+        balance: U256,
+        reply: Reply<()>,
+    },
+    SetErc20Allowance {
+        owner: Address,
+        spender: Address,
+        token: Address,
+        amount: U256,
+        reply: Reply<()>,
+    },
     Logs {
         filter: LogFilter,
         reply: Reply<Vec<Log>>,
@@ -462,6 +503,12 @@ fn run_worker(
             }
             WorkerCommand::SetStorage { address, slot, value, reply } => {
                 let _ = reply.send(runtime.set_storage(address, slot, value));
+            }
+            WorkerCommand::DealErc20 { account, token, balance, reply } => {
+                let _ = reply.send(runtime.deal_erc20(account, token, balance));
+            }
+            WorkerCommand::SetErc20Allowance { owner, spender, token, amount, reply } => {
+                let _ = reply.send(runtime.set_erc20_allowance(owner, spender, token, amount));
             }
             WorkerCommand::Logs { filter, reply } => {
                 let _ = reply.send(runtime.logs(filter));

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Instant;
 
-use alloy_primitives::{Address as EthAddress, B256, Bytes, Keccak256, U256};
+use alloy_primitives::{Address as EthAddress, B256, Bytes, Keccak256, U256, keccak256};
 use cid::Cid;
 use fvm::call_manager::DefaultCallManager;
 use fvm::engine::EnginePool;
@@ -45,6 +45,9 @@ type RuntimeExecutor = DefaultExecutor<RuntimeKernel>;
 const BLOCK_TIME_SECONDS: u64 = 1;
 const EAM_ACTOR_ID: u64 = 10;
 const PRELOAD_ACTORS: [&str; 4] = ["eam", "ethaccount", "evm", "placeholder"];
+const ERC20_BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+const ERC20_ALLOWANCE_SELECTOR: [u8; 4] = [0xdd, 0x62, 0xed, 0x3e];
+const ERC20_MAX_BASE_SLOT: u64 = 255;
 
 #[derive(Clone)]
 struct PendingTransaction {
@@ -340,13 +343,8 @@ impl NodeRuntime {
         request: CallRequest,
         selector: BlockSelector,
     ) -> Result<Bytes, NodeError> {
-        let simulation = self.simulate(request, selector)?;
-        let exit_code = simulation.apply.msg_receipt.exit_code;
-        if !exit_code.is_success() {
-            return Err(call_failure(&simulation.apply)?);
-        }
-        let kind = execution_kind(simulation.to);
-        Ok(decode_execution_return(kind, &simulation.apply.msg_receipt.return_data)?.output)
+        let (root, epoch, timestamp) = self.resolve_state(selector, true)?;
+        self.call_at_state(request, root, epoch, timestamp)
     }
 
     pub(crate) fn estimate_gas(
@@ -593,6 +591,40 @@ impl NodeRuntime {
         self.publish_state_tree(tree)
     }
 
+    pub(crate) fn deal_erc20(
+        &mut self,
+        account: EthAddress,
+        token: EthAddress,
+        balance: U256,
+    ) -> Result<(), NodeError> {
+        let calldata = erc20_balance_calldata(account);
+        let slot = self.find_erc20_storage_slot(token, calldata, balance, "balance", |base| {
+            solidity_address_mapping_slot(account, U256::from(base))
+        })?;
+        if let Some(slot) = slot {
+            self.set_storage(token, U256::from_be_bytes(slot.0), B256::from(balance))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_erc20_allowance(
+        &mut self,
+        owner: EthAddress,
+        spender: EthAddress,
+        token: EthAddress,
+        amount: U256,
+    ) -> Result<(), NodeError> {
+        let calldata = erc20_allowance_calldata(owner, spender);
+        let slot = self.find_erc20_storage_slot(token, calldata, amount, "allowance", |base| {
+            let inner = solidity_address_mapping_slot(owner, U256::from(base));
+            solidity_address_mapping_slot(spender, U256::from_be_bytes(inner.0))
+        })?;
+        if let Some(slot) = slot {
+            self.set_storage(token, U256::from_be_bytes(slot.0), B256::from(amount))?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn logs(&self, filter: LogFilter) -> Result<Vec<Log>, NodeError> {
         let records = if let Some(hash) = filter.block_hash {
             if filter.from_block.is_some() || filter.to_block.is_some() {
@@ -797,6 +829,16 @@ impl NodeRuntime {
         selector: BlockSelector,
     ) -> Result<Simulation, NodeError> {
         let (root, epoch, timestamp) = self.resolve_state(selector, true)?;
+        self.simulate_at(request, root, epoch, timestamp)
+    }
+
+    fn simulate_at(
+        &self,
+        request: CallRequest,
+        root: Cid,
+        epoch: i64,
+        timestamp: u64,
+    ) -> Result<Simulation, NodeError> {
         let from = request.from.unwrap_or_default();
         let sender = self.actor_at(root, from)?;
         let nonce =
@@ -827,6 +869,55 @@ impl NodeRuntime {
         let _unpublished_root =
             executor.flush().map_err(|error| NodeError::Execution(error.to_string()))?;
         Ok(Simulation { apply, to })
+    }
+
+    fn call_at_state(
+        &self,
+        request: CallRequest,
+        root: Cid,
+        epoch: i64,
+        timestamp: u64,
+    ) -> Result<Bytes, NodeError> {
+        let simulation = self.simulate_at(request, root, epoch, timestamp)?;
+        if !simulation.apply.msg_receipt.exit_code.is_success() {
+            return Err(call_failure(&simulation.apply)?);
+        }
+        let kind = execution_kind(simulation.to);
+        Ok(decode_execution_return(kind, &simulation.apply.msg_receipt.return_data)?.output)
+    }
+
+    fn find_erc20_storage_slot(
+        &self,
+        token: EthAddress,
+        calldata: Bytes,
+        requested: U256,
+        field: &'static str,
+        slot_for_base: impl Fn(u64) -> B256,
+    ) -> Result<Option<B256>, NodeError> {
+        let request = CallRequest { to: Some(token), input: calldata, ..CallRequest::default() };
+        let (root, epoch, timestamp) = self.resolve_state(BlockSelector::Latest, true)?;
+        let current = decode_erc20_uint(
+            token,
+            field,
+            &self.call_at_state(request.clone(), root, epoch, timestamp)?,
+        )?;
+        if current == requested {
+            return Ok(None);
+        }
+
+        for base in 0..=ERC20_MAX_BASE_SLOT {
+            let slot = slot_for_base(base);
+            let candidate_root =
+                self.storage_override_root(root, token, slot, B256::from(requested))?;
+            let Ok(output) = self.call_at_state(request.clone(), candidate_root, epoch, timestamp)
+            else {
+                continue;
+            };
+            if decode_erc20_uint(token, field, &output).is_ok_and(|value| value == requested) {
+                return Ok(Some(slot));
+            }
+        }
+        Err(NodeError::Erc20StorageSlotNotFound { token, field })
     }
 
     fn commit_blocks(
@@ -1112,6 +1203,49 @@ impl NodeRuntime {
                 detail: error.to_string(),
             }
         })
+    }
+
+    fn storage_override_root(
+        &self,
+        root: Cid,
+        token: EthAddress,
+        slot: B256,
+        value: B256,
+    ) -> Result<Cid, NodeError> {
+        let delegated = FvmAddress::new_delegated(EAM_ACTOR_ID, token.as_slice())
+            .map_err(|error| NodeError::InvalidDelegatedAddress(error.to_string()))?;
+        let mut tree = StateTree::new_from_root(Rc::clone(&self.store), &root)
+            .map_err(|error| NodeError::Execution(error.to_string()))?;
+        let Some(actor_id) =
+            tree.lookup_id(&delegated).map_err(|error| NodeError::Execution(error.to_string()))?
+        else {
+            return Err(NodeError::Erc20TokenNotEvm { token });
+        };
+        let Some(mut actor) =
+            tree.get_actor(actor_id).map_err(|error| NodeError::Execution(error.to_string()))?
+        else {
+            return Err(NodeError::Erc20TokenNotEvm { token });
+        };
+        if actor.code != self.bundle.code("evm")? {
+            return Err(NodeError::Erc20TokenNotEvm { token });
+        }
+        let mut state = self.evm_state_v18(token, &actor)?;
+        state.replace_storage_slot(self.store.as_ref(), slot.0, value.0).map_err(|error| {
+            NodeError::MalformedEvmStorage {
+                address: token,
+                root: Box::new(state.contract_state()),
+                detail: error.to_string(),
+            }
+        })?;
+        actor.state = state.flush(self.store.as_ref(), &actor.state).map_err(|error| {
+            NodeError::MalformedEvmState {
+                address: token,
+                state: Box::new(actor.state),
+                detail: error.to_string(),
+            }
+        })?;
+        tree.set_actor(actor_id, actor);
+        tree.flush().map_err(|error| NodeError::Execution(error.to_string()))
     }
 
     fn current_state_tree(&self) -> Result<StateTree<Rc<RuntimeBlockstore>>, NodeError> {
@@ -1482,6 +1616,39 @@ fn token_amount_to_u256(amount: &TokenAmount) -> Result<U256, NodeError> {
         return Err(NodeError::InvalidTokenAmount(amount.to_string()));
     }
     Ok(U256::from_be_slice(&bytes))
+}
+
+fn erc20_balance_calldata(account: EthAddress) -> Bytes {
+    let mut calldata = [0_u8; 36];
+    calldata[..4].copy_from_slice(&ERC20_BALANCE_OF_SELECTOR);
+    calldata[16..].copy_from_slice(account.as_slice());
+    Bytes::copy_from_slice(&calldata)
+}
+
+fn erc20_allowance_calldata(owner: EthAddress, spender: EthAddress) -> Bytes {
+    let mut calldata = [0_u8; 68];
+    calldata[..4].copy_from_slice(&ERC20_ALLOWANCE_SELECTOR);
+    calldata[16..36].copy_from_slice(owner.as_slice());
+    calldata[48..].copy_from_slice(spender.as_slice());
+    Bytes::copy_from_slice(&calldata)
+}
+
+fn solidity_address_mapping_slot(address: EthAddress, base: U256) -> B256 {
+    let mut preimage = [0_u8; 64];
+    preimage[12..32].copy_from_slice(address.as_slice());
+    preimage[32..].copy_from_slice(&base.to_be_bytes::<32>());
+    keccak256(preimage)
+}
+
+fn decode_erc20_uint(
+    token: EthAddress,
+    field: &'static str,
+    output: &[u8],
+) -> Result<U256, NodeError> {
+    if output.len() != 32 {
+        return Err(NodeError::MalformedErc20Return { token, field, length: output.len() });
+    }
+    Ok(U256::from_be_slice(output))
 }
 
 fn log_matches_filter(log: &Log, filter: &LogFilter) -> bool {

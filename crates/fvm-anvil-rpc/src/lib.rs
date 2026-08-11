@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 pub use anvil_server::{ServerConfig, http_router};
 pub use wire::{
     AccessListItem, AddressBlockParams, AnvilBytes, AnvilMineParams, AnvilQuantity, BlockParams,
-    CallParams, EvmMineParams, FeeHistoryParams, HashBlockParams, LogFilterParams, One,
+    CallParams, EvmMineParams, FeeHistoryParams, Four, HashBlockParams, LogFilterParams, One,
     QuantityU64, QuantityU256, RpcRequest, StorageParams, StrictBytes, Three, TransactionRequest,
     Two,
 };
@@ -306,6 +306,19 @@ impl RpcService {
                     Err(error) => node_error(error),
                 }
             }
+            RpcRequest::DealErc20 { params } | RpcRequest::SetErc20Balance { params } => {
+                match self.node.deal_erc20(params.0, params.1, params.2.0).await {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
+            RpcRequest::SetErc20Allowance { params } => {
+                match self.node.set_erc20_allowance(params.0, params.1, params.2, params.3.0).await
+                {
+                    Ok(()) => ResponseResult::success(Value::Null),
+                    Err(error) => node_error(error),
+                }
+            }
             RpcRequest::FilecoinGetGasBreakdown { params } => {
                 match self.node.filecoin_gas_breakdown(params.0).await {
                     Ok(Some(breakdown)) => {
@@ -415,6 +428,10 @@ fn is_known_method(method: &str) -> bool {
             | "evm_setAccountNonce"
             | "anvil_setStorageAt"
             | "hardhat_setStorageAt"
+            | "anvil_dealERC20"
+            | "hardhat_dealERC20"
+            | "anvil_setERC20Balance"
+            | "anvil_setERC20Allowance"
             | "filecoin_getGasBreakdown"
             | "filecoin_getGasTrace"
             | "filecoin_getStateRoots"
@@ -457,6 +474,9 @@ fn static_response(request: &RpcRequest) -> Option<Value> {
         | RpcRequest::SetCode { .. }
         | RpcRequest::SetNonce { .. }
         | RpcRequest::SetStorageAt { .. }
+        | RpcRequest::DealErc20 { .. }
+        | RpcRequest::SetErc20Balance { .. }
+        | RpcRequest::SetErc20Allowance { .. }
         | RpcRequest::FilecoinGetGasBreakdown { .. }
         | RpcRequest::FilecoinGetGasTrace { .. }
         | RpcRequest::FilecoinGetStateRoots { .. } => None,
@@ -579,6 +599,10 @@ mod tests {
             ("evm_setAccountNonce", json!([address, "7"])),
             ("anvil_setStorageAt", json!([address, "0x0", hash])),
             ("hardhat_setStorageAt", json!([address, 0, hash])),
+            ("anvil_dealERC20", json!([address, address, "0x2a"])),
+            ("hardhat_dealERC20", json!([address, address, 42])),
+            ("anvil_setERC20Balance", json!([address, address, "42"])),
+            ("anvil_setERC20Allowance", json!([address, address, address, "0x2a"])),
             ("filecoin_getGasBreakdown", json!([hash])),
             ("filecoin_getGasTrace", json!([hash])),
             ("filecoin_getStateRoots", json!([])),
@@ -661,6 +685,37 @@ mod tests {
             assert!(
                 parse_json(json!({ "method": "anvil_setStorageAt", "params": params })).is_err()
             );
+        }
+
+        let token = address!("2222222222222222222222222222222222222222");
+        let spender = address!("3333333333333333333333333333333333333333");
+        assert_eq!(
+            parse_json(json!({
+                "method": "anvil_setERC20Balance",
+                "params": [address, token, "0x2a"]
+            }))
+            .unwrap(),
+            RpcRequest::SetErc20Balance {
+                params: Three(address, token, AnvilQuantity(U256::from(42)))
+            }
+        );
+        assert_eq!(
+            parse_json(json!({
+                "method": "anvil_setERC20Allowance",
+                "params": [address, spender, token, "42"]
+            }))
+            .unwrap(),
+            RpcRequest::SetErc20Allowance {
+                params: Four(address, spender, token, AnvilQuantity(U256::from(42)))
+            }
+        );
+        for (method, params) in [
+            ("anvil_setERC20Balance", json!([address, token])),
+            ("anvil_setERC20Balance", json!([address, token, "0x1", "0x2"])),
+            ("anvil_setERC20Allowance", json!([address, spender, token])),
+            ("anvil_setERC20Allowance", json!([address, spender, token, "0x1", "0x2"])),
+        ] {
+            assert!(parse_json(json!({ "method": method, "params": params })).is_err());
         }
     }
 

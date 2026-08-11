@@ -1,7 +1,7 @@
 # fvm-anvil design and behavior
 
 Status: living design record  
-Last updated: 2026-08-05
+Last updated: 2026-08-11
 
 Current implementation status and remaining work are tracked in
 [`docs/implementation-plan.md`](implementation-plan.md).
@@ -281,7 +281,9 @@ The implemented Anvil controls are:
   (`hardhat_addBalance`, `tenderly_addBalance`);
 - `anvil_setNonce` (`hardhat_setNonce`, `evm_setAccountNonce`);
 - `anvil_setCode` (`hardhat_setCode`);
-- `anvil_setStorageAt` (`hardhat_setStorageAt`).
+- `anvil_setStorageAt` (`hardhat_setStorageAt`);
+- `anvil_dealERC20` (`hardhat_dealERC20`), `anvil_setERC20Balance`, and
+  `anvil_setERC20Allowance`.
 
 Methods outside this surface return JSON-RPC `method not found`; they must not report success without
 an FEVM implementation.
@@ -301,6 +303,13 @@ nonce lives in `ActorState.sequence`; EVM nonce, bytecode, bytecode hash, and st
 builtin-actors v18 adapter in `fvm-anvil-state`. Setting code or storage on an address without an EVM
 actor creates an EVM actor at that delegated address while preserving its balance and
 Ethereum-visible nonce. `anvil_addBalance` saturates at `U256::MAX`, matching Foundry.
+
+ERC-20 controls support standard Solidity balance and nested allowance mappings whose base slot is
+in `0..=255`. The node tries each mapping key on an ephemeral FVM root, executes `balanceOf` or
+`allowance` through the official EVM actor, and commits only a candidate that returns the requested
+value. Already-equal values are successful no-ops. Nonstandard, computed, packed, or out-of-range
+layouts fail clearly rather than committing an unverified slot. Only the final mutation is
+published and participates in snapshots.
 
 ### Block production modes
 
