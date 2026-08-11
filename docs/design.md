@@ -216,8 +216,10 @@ For every raw transaction it:
 7. Map value, gas limit, fee cap, and premium.
 8. CBOR-encode EVM calldata.
 9. Construct the exact Filecoin delegated signature and `SignedMessage`.
-10. Use the serialized Filecoin message length for inclusion gas.
-11. Submit the unsigned message to `DefaultExecutor` with `ApplyKind::Explicit`.
+10. Reject DAG-CBOR encoded `SignedMessage`s larger than 64 KiB before pool admission, matching
+    Forest's anti-DoS limit.
+11. Use the serialized Filecoin message length for inclusion gas.
+12. Submit the unsigned message to `DefaultExecutor` with `ApplyKind::Explicit`.
 
 FVM does not validate the original Ethereum envelope for this path; signature and chain-ID validation are the RPC boundary's responsibility.
 

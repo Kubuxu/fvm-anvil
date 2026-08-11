@@ -518,6 +518,7 @@ fn transaction_error(error: NodeError) -> ResponseResult {
         | NodeError::FeeCapTooLow { .. }
         | NodeError::PriorityFeeAboveCap { .. }
         | NodeError::InvalidGasLimit { .. }
+        | NodeError::TransactionTooLarge { .. }
         | NodeError::PendingBlockGasLimit { .. }
         | NodeError::InsufficientFunds { .. }) => {
             ResponseResult::error(RpcError::transaction_rejected(validation.to_string()))
@@ -1257,7 +1258,7 @@ mod tests {
 
         let rejected = RpcResponse::new(
             Id::Number(10),
-            transaction_error(NodeError::InvalidGasLimit { actual: 0, maximum: 1 }),
+            transaction_error(NodeError::TransactionTooLarge { actual: 2, maximum: 1 }),
         );
         let rejected = serde_json::to_value(rejected).unwrap();
         assert_eq!(rejected["error"]["code"], -32003);

@@ -45,6 +45,7 @@ type RuntimeExecutor = DefaultExecutor<RuntimeKernel>;
 const BLOCK_TIME_SECONDS: u64 = 1;
 const EAM_ACTOR_ID: u64 = 10;
 const PRELOAD_ACTORS: [&str; 4] = ["eam", "ethaccount", "evm", "placeholder"];
+const MAX_SIGNED_MESSAGE_SIZE: usize = 64 << 10;
 const ERC20_BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
 const ERC20_ALLOWANCE_SELECTOR: [u8; 4] = [0xdd, 0x62, 0xed, 0x3e];
 const ERC20_MAX_BASE_SLOT: u64 = 255;
@@ -745,6 +746,7 @@ impl NodeRuntime {
         {
             return Err(NodeError::DuplicateTransaction(hash));
         }
+        validate_signed_message_size(transaction.serialized_len())?;
         if transaction.gas_limit() == 0 || transaction.gas_limit() > self.block_gas_limit {
             return Err(NodeError::InvalidGasLimit {
                 actual: transaction.gas_limit(),
@@ -1485,6 +1487,16 @@ fn public_transaction(transaction: &BridgedTransaction) -> Transaction {
     }
 }
 
+fn validate_signed_message_size(serialized_len: usize) -> Result<(), NodeError> {
+    if serialized_len > MAX_SIGNED_MESSAGE_SIZE {
+        return Err(NodeError::TransactionTooLarge {
+            actual: serialized_len,
+            maximum: MAX_SIGNED_MESSAGE_SIZE,
+        });
+    }
+    Ok(())
+}
+
 fn maximum_transaction_cost(transaction: &BridgedTransaction) -> U256 {
     let gas_cost = U256::from(transaction.gas_limit())
         .saturating_mul(U256::from(transaction.max_fee_per_gas()));
@@ -1720,9 +1732,21 @@ fn synthetic_block_hash(
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
 
-    use super::{MiningSchedule, effective_gas_price, log_matches_filter};
+    use super::{
+        MAX_SIGNED_MESSAGE_SIZE, MiningSchedule, effective_gas_price, log_matches_filter,
+        validate_signed_message_size,
+    };
     use crate::error::NodeError;
     use crate::types::{Log, LogFilter};
+
+    #[test]
+    fn signed_message_size_limit_matches_forest() {
+        assert!(validate_signed_message_size(MAX_SIGNED_MESSAGE_SIZE).is_ok());
+        assert!(matches!(
+            validate_signed_message_size(MAX_SIGNED_MESSAGE_SIZE + 1),
+            Err(NodeError::TransactionTooLarge { actual: 65_537, maximum: 65_536 })
+        ));
+    }
 
     #[test]
     fn effective_price_uses_eip_1559_cap_and_priority() {

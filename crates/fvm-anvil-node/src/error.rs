@@ -79,6 +79,8 @@ pub enum NodeError {
     PriorityFeeAboveCap { priority_fee: u128, fee_cap: u128 },
     #[error("transaction gas limit {actual} is invalid; maximum is {maximum}")]
     InvalidGasLimit { actual: u64, maximum: u64 },
+    #[error("serialized Filecoin signed message is {actual} bytes; maximum is {maximum}")]
+    TransactionTooLarge { actual: usize, maximum: usize },
     #[error("pending transactions reserve {actual} gas, exceeding the block maximum {maximum}")]
     PendingBlockGasLimit { actual: u64, maximum: u64 },
     #[error("account {address} has {balance} attoFIL but the transaction requires {required}")]
