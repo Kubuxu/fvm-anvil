@@ -62,7 +62,8 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
+        // Encoder flushes expose the compressed length; the frame boundary flushes the file.
+        Ok(())
     }
 }
 
@@ -191,7 +192,6 @@ impl ForestCarWriter {
         cid.write_bytes(&mut *frame)
             .map_err(|error| ForestCarWriterError::Cid(error.to_string()))?;
         frame.write_all(data)?;
-        frame.flush()?;
         write_record(&mut self.entries, (summary(cid), self.frame_offset))?;
         self.frame_has_blocks = true;
         Ok(())

@@ -20,7 +20,8 @@ use thiserror::Error;
 
 const MAX_CBOR_DEPTH: usize = 512;
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
-const CID_BUCKETS: usize = 1 << 16;
+// Four million heads use 32 MiB and keep multi-actor traversals out of long disk chains.
+const CID_BUCKETS: usize = 1 << 22;
 const EMPTY_RECORD: u64 = u64::MAX;
 
 /// Errors returned by the disk set and graph walker.
