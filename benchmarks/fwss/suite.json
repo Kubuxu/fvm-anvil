@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "archive": "snapshots/fwss-mainnet-v1.3.0.press.car.zst",
+  "results": "benchmarks/fwss/results/mainnet-v1.3.0",
+  "gasLimit": 10000000000,
+  "funding": {
+    "filAtto": "100000000000000000000000",
+    "usdfc": "1000000000000000000000000",
+    "deposit": "1000000000000000000000",
+    "rateAllowance": "1000000000000000000000",
+    "lockupAllowance": "1000000000000000000000",
+    "maxLockupPeriod": 31536000
+  },
+  "contracts": {
+    "pdp": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
+    "fwss": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+    "payments": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
+    "usdfc": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045",
+    "registry": "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB",
+    "sessionKeys": "0x74FD50525A958aF5d484601E252271f9625231aB",
+    "filBeamBeneficiary": "0x1D60d2F5960Af6341e842C539985FA297E10d6eA",
+    "railsLibrary": "0x25649D27D556c64708D0BF9B20eC214eC991E223",
+    "signatureLibrary": "0xBbd3b82a9396156a997111D42c5356718522ed2D",
+    "view": "0xAD28BBF18A72f728Ed816D07F5a1d7Ec40D68b5e"
+  },
+  "builds": {
+    "pdp-deployed": {
+      "component": "pdp",
+      "kind": "imported"
+    },
+    "fwss-deployed": {
+      "component": "fwss",
+      "kind": "imported"
+    },
+    "pdp-local": {
+      "component": "pdp",
+      "kind": "local",
+      "repository": "../../FilOzone/pdp",
+      "artifact": "out/PDPVerifier.sol/PDPVerifier.json",
+      "upgradeCall": "migrate()"
+    },
+    "fwss-local": {
+      "component": "fwss",
+      "kind": "local",
+      "repository": "../../FilOzone/filecoin-services/service_contracts",
+      "artifact": "out/FilecoinWarmStorageService.sol/FilecoinWarmStorageService.json",
+      "upgradeCall": "0x"
+    }
+  },
+  "variants": {
+    "deployed": {
+      "pdp": "pdp-deployed",
+      "fwss": "fwss-deployed",
+      "fixtureCreation": "after-upgrades"
+    },
+    "local-legacy": {
+      "pdp": "pdp-local",
+      "fwss": "fwss-local",
+      "fixtureCreation": "before-upgrades"
+    },
+    "local-pdp": {
+      "pdp": "pdp-local",
+      "fwss": "fwss-deployed",
+      "fixtureCreation": "after-upgrades"
+    },
+    "local-new": {
+      "pdp": "pdp-local",
+      "fwss": "fwss-local",
+      "fixtureCreation": "after-upgrades"
+    }
+  },
+  "cases": {
+    "batchSizes": [1, 8, 32, 64, 128, 256, 512, 1024, 2048],
+    "startingPieceCounts": [0, 1024],
+    "metadataProfiles": ["none", "one"],
+    "proofChallenges": 5,
+    "populatedDeletePieces": 1024,
+    "maximumCeiling": 4096
+  }
+}
