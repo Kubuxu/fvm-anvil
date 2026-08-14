@@ -339,7 +339,7 @@ class Runner:
             elif operation == "schedulePieceDeletions":
                 parameters = {"batchSize": size}
             elif operation == "nextProvingPeriod":
-                parameters = {"removalCount": size}
+                parameters = {"removalCount": size, "metadata": metadata}
             elif operation == "cleanupPieces":
                 parameters = {"batchSize": size}
             else:
