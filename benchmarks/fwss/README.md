@@ -17,7 +17,14 @@ Build the node:
 $ cargo build --release -p fvm-anvil
 ```
 
-The `deployed` variant uses only contracts from the snapshot. Before running a local variant, update the corresponding `repository` paths in [`suite.json`](suite.json) and build the Solidity projects once with `forge build` to confirm they compile.
+The local variants use independent, ignored checkouts under `extern/`; they do not depend on sibling repositories outside this checkout. Create both clones with their pinned submodules:
+
+```console
+$ git clone --recurse-submodules https://github.com/FilOzone/pdp.git extern/pdp
+$ git clone --recurse-submodules https://github.com/FilOzone/filecoin-services.git extern/filecoin-services
+```
+
+Build each Solidity project once with `forge build` to confirm the checked-out revisions compile. The runner rebuilds them before deploying local variants.
 
 ## Start the node
 

@@ -35,14 +35,14 @@
     "pdp-local": {
       "component": "pdp",
       "kind": "local",
-      "repository": "../../FilOzone/pdp",
+      "repository": "extern/pdp",
       "artifact": "out/PDPVerifier.sol/PDPVerifier.json",
       "upgradeCall": "migrate()"
     },
     "fwss-local": {
       "component": "fwss",
       "kind": "local",
-      "repository": "../../FilOzone/filecoin-services/service_contracts",
+      "repository": "extern/filecoin-services/service_contracts",
       "artifact": "out/FilecoinWarmStorageService.sol/FilecoinWarmStorageService.json",
       "upgradeCall": "0x"
     }
