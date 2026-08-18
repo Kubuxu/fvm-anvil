@@ -115,7 +115,13 @@ def _successful(submission: Submission, purpose: str) -> dict[str, Any]:
     return submission.receipt
 
 
-def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
+def prepare_case(
+    fixtures: Fixtures,
+    case: dict[str, Any],
+    *,
+    compact_empty_metadata: bool = False,
+    compact_setup_metadata: bool = False,
+) -> PreparedCase:
     operation = case["operation"]
     parameters = case.get("parameters", {})
     pdp = fixtures.contracts["pdp"]
@@ -146,11 +152,21 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
     if operation == "addPieces":
         starting = int(parameters["startingPieceCount"])
         metadata = parameters["metadata"]
-        fixtures.populate(dataset, starting, metadata)
+        fixtures.populate(
+            dataset,
+            starting,
+            metadata,
+            compact_empty_metadata=compact_setup_metadata,
+        )
         batch_size = int(parameters["batchSize"])
 
         def action() -> tuple[Submission, dict[str, Any]]:
-            return fixtures.add_pieces_submission(dataset, batch_size, metadata), {
+            return fixtures.add_pieces_submission(
+                dataset,
+                batch_size,
+                metadata,
+                compact_empty_metadata=compact_empty_metadata,
+            ), {
                 "dataSetId": dataset.data_set_id,
                 "startingPieceCount": starting,
             }
@@ -168,7 +184,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
 
     if operation == "schedulePieceDeletions":
         batch_size = int(parameters["batchSize"])
-        fixtures.populate(dataset, batch_size + 1, parameters.get("metadata", "one"))
+        fixtures.populate(
+            dataset,
+            batch_size + 1,
+            parameters.get("metadata", "one"),
+            compact_empty_metadata=compact_setup_metadata,
+        )
         piece_ids = list(range(batch_size))
         return PreparedCase(
             lambda: (
@@ -181,7 +202,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
 
     if operation == "nextProvingPeriod":
         removal_count = int(parameters["removalCount"])
-        fixtures.populate(dataset, removal_count + 1, parameters.get("metadata", "one"))
+        fixtures.populate(
+            dataset,
+            removal_count + 1,
+            parameters.get("metadata", "one"),
+            compact_empty_metadata=compact_setup_metadata,
+        )
         piece_ids = list(range(removal_count))
         try:
             setup_receipt = fixtures.schedule(dataset, piece_ids)
@@ -216,7 +242,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
 
     if operation == "provePossession":
         challenges = int(parameters["challengeCount"])
-        fixtures.populate(dataset, 128, "one")
+        fixtures.populate(
+            dataset,
+            128,
+            "one",
+            compact_empty_metadata=compact_setup_metadata,
+        )
         challenge_epoch, activation = fixtures.activate(dataset)
         fixtures.chain.mine_to(challenge_epoch)
         setup["activationTransactionHash"] = activation["transactionHash"]
@@ -232,7 +263,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
         return PreparedCase(action, lambda: None, setup)
 
     if operation == "terminateService":
-        fixtures.populate(dataset, 128, "one")
+        fixtures.populate(
+            dataset,
+            128,
+            "one",
+            compact_empty_metadata=compact_setup_metadata,
+        )
         _, activation = fixtures.activate(dataset)
         setup["activationTransactionHash"] = activation["transactionHash"]
         return PreparedCase(
@@ -248,7 +284,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
         state = parameters["state"]
         if state == "populated":
             piece_count = int(parameters["pieceCount"])
-            fixtures.populate(dataset, piece_count, "one")
+            fixtures.populate(
+                dataset,
+                piece_count,
+                "one",
+                compact_empty_metadata=compact_setup_metadata,
+            )
             pre_activation_settlement = fixtures.settle_before_activation(dataset)
             setup["preActivationSettlementTransactionHash"] = pre_activation_settlement[
                 "transactionHash"
@@ -287,7 +328,12 @@ def prepare_case(fixtures: Fixtures, case: dict[str, Any]) -> PreparedCase:
         piece_count = max(
             batch_size, int(fixtures.suite["cases"]["populatedDeletePieces"])
         )
-        fixtures.populate(dataset, piece_count, "one")
+        fixtures.populate(
+            dataset,
+            piece_count,
+            "one",
+            compact_empty_metadata=compact_setup_metadata,
+        )
         pre_activation_settlement = fixtures.settle_before_activation(dataset)
         setup["preActivationSettlementTransactionHash"] = pre_activation_settlement[
             "transactionHash"

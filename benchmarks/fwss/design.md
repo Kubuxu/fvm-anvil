@@ -131,6 +131,11 @@ Adding a normal implementation variant requires only a build entry and a variant
 - `before-upgrades`: construct each operation fixture with the imported implementations, then upgrade and measure it. This exercises existing/legacy data-set state under candidate code.
 - `after-upgrades`: install the variant first, then construct and measure the fixture. This exercises state created by the selected implementations.
 
+Set `compactEmptyMetadata` on a variant when its FWSS build accepts the compact
+empty-metadata representation. The runner then signs and submits empty outer
+metadata arrays for measured metadata-free `addPieces` calls. Setup performed
+before an upgrade remains expanded so it is valid against the imported FWSS.
+
 For the deployed variant, `after-upgrades` performs no upgrade. Its data sets use the deployed legacy layout.
 
 Some cases are naturally not applicable. For example, candidate `createDataSet` cannot both be measured and have its resulting data set predate the upgrade. The result is `not-applicable`, not a synthetic measurement.

@@ -237,7 +237,12 @@ class Fixtures:
         return "[" + ",".join(f"({ZERO_LEAF},{siblings})" for _ in range(count)) + "]"
 
     def add_pieces_submission(
-        self, dataset: Dataset, count: int, metadata_profile: str
+        self,
+        dataset: Dataset,
+        count: int,
+        metadata_profile: str,
+        *,
+        compact_empty_metadata: bool = False,
     ):
         nonce = dataset.nonce()
         metadata_entries = (
@@ -275,15 +280,27 @@ class Fixtures:
                 "clientDataSetId": dataset.client_data_set_id,
                 "nonce": nonce,
                 "pieceData": [{"data": VALID_PIECE_CID} for _ in range(count)],
-                "pieceMetadata": [
-                    {"pieceIndex": index, "metadata": metadata_entries}
-                    for index in range(count)
-                ],
+                "pieceMetadata": (
+                    []
+                    if compact_empty_metadata and metadata_profile == "none"
+                    else [
+                        {"pieceIndex": index, "metadata": metadata_entries}
+                        for index in range(count)
+                    ]
+                ),
             },
         }
         signature = self.chain.sign_typed_data(typed)
-        keys = [[entry["key"] for entry in metadata_entries] for _ in range(count)]
-        values = [[entry["value"] for entry in metadata_entries] for _ in range(count)]
+        keys = (
+            []
+            if compact_empty_metadata and metadata_profile == "none"
+            else [[entry["key"] for entry in metadata_entries] for _ in range(count)]
+        )
+        values = (
+            []
+            if compact_empty_metadata and metadata_profile == "none"
+            else [[entry["value"] for entry in metadata_entries] for _ in range(count)]
+        )
         extra = self.chain.abi_encode(
             "f(uint256,string[][],string[][],bytes)",
             str(nonce),
@@ -303,9 +320,19 @@ class Fixtures:
         )
 
     def add_pieces(
-        self, dataset: Dataset, count: int, metadata_profile: str
+        self,
+        dataset: Dataset,
+        count: int,
+        metadata_profile: str,
+        *,
+        compact_empty_metadata: bool = False,
     ) -> dict[str, Any]:
-        submission = self.add_pieces_submission(dataset, count, metadata_profile)
+        submission = self.add_pieces_submission(
+            dataset,
+            count,
+            metadata_profile,
+            compact_empty_metadata=compact_empty_metadata,
+        )
         if submission.rejection is not None or submission.receipt is None:
             raise RuntimeError(f"setup addPieces was rejected: {submission.rejection}")
         if quantity(submission.receipt["status"]) != 1:
@@ -316,12 +343,24 @@ class Fixtures:
         return submission.receipt
 
     def populate(
-        self, dataset: Dataset, target: int, metadata_profile: str = "one"
+        self,
+        dataset: Dataset,
+        target: int,
+        metadata_profile: str = "one",
+        *,
+        compact_empty_metadata: bool = False,
     ) -> list[dict[str, Any]]:
         receipts = []
         while dataset.piece_count < target:
             count = min(32, target - dataset.piece_count)
-            receipts.append(self.add_pieces(dataset, count, metadata_profile))
+            receipts.append(
+                self.add_pieces(
+                    dataset,
+                    count,
+                    metadata_profile,
+                    compact_empty_metadata=compact_empty_metadata,
+                )
+            )
         return receipts
 
     def schedule_submission(self, dataset: Dataset, piece_ids: list[int]):

@@ -242,6 +242,7 @@ class Runner:
                 return existing
 
         variant = self.suite["variants"][variant_name]
+        compact_empty_metadata = bool(variant.get("compactEmptyMetadata", False))
         self.restore_base()
         self.fixtures.begin_case(key)
         if (
@@ -262,11 +263,20 @@ class Runner:
 
         try:
             if variant["fixtureCreation"] == "before-upgrades":
-                prepared = prepare_case(self.fixtures, case)
+                prepared = prepare_case(
+                    self.fixtures,
+                    case,
+                    compact_empty_metadata=compact_empty_metadata,
+                )
                 upgrades = self.manager.configure_variant(variant_name)
             else:
                 upgrades = self.manager.configure_variant(variant_name)
-                prepared = prepare_case(self.fixtures, case)
+                prepared = prepare_case(
+                    self.fixtures,
+                    case,
+                    compact_empty_metadata=compact_empty_metadata,
+                    compact_setup_metadata=compact_empty_metadata,
+                )
         except SetupUnreachable as error:
             result = {
                 "schemaVersion": RESULT_SCHEMA,
