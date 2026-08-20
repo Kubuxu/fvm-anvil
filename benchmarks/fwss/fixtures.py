@@ -402,6 +402,26 @@ class Fixtures:
             )
         return submission.receipt
 
+    def process_deletions_submission(self, dataset: Dataset, removal_count: int):
+        return self.chain.submit(
+            to=self.contracts["pdp"],
+            signature="processPieceDeletions(uint256,uint256)",
+            arguments=[str(dataset.data_set_id), str(removal_count)],
+        )
+
+    def process_deletions(self, dataset: Dataset, removal_count: int) -> dict[str, Any]:
+        submission = self.process_deletions_submission(dataset, removal_count)
+        if submission.rejection is not None or submission.receipt is None:
+            raise RuntimeError(
+                f"setup processPieceDeletions was rejected: {submission.rejection}"
+            )
+        if quantity(submission.receipt["status"]) != 1:
+            raise RuntimeError(
+                "setup processPieceDeletions reverted: "
+                f"{json.dumps(submission.receipt)}"
+            )
+        return submission.receipt
+
     def next_challenge_epoch(self, dataset: Dataset) -> int:
         del dataset
         config = self.chain.call(

@@ -15,7 +15,11 @@ SCHEDULE_REMOVALS_BATCH_LIMIT = 2_000
 
 
 def capped_batch_size(operation: str, size: int) -> int:
-    if operation in ("schedulePieceDeletions", "nextProvingPeriod"):
+    if operation in (
+        "schedulePieceDeletions",
+        "processPieceDeletions",
+        "nextProvingPeriod",
+    ):
         return min(size, SCHEDULE_REMOVALS_BATCH_LIMIT)
     return size
 
@@ -24,11 +28,31 @@ class SetupUnreachable(RuntimeError):
     pass
 
 
+def _populate(
+    fixtures: Fixtures,
+    dataset: Dataset,
+    target: int,
+    metadata_profile: str = "one",
+    *,
+    compact_empty_metadata: bool = False,
+) -> None:
+    try:
+        fixtures.populate(
+            dataset,
+            target,
+            metadata_profile,
+            compact_empty_metadata=compact_empty_metadata,
+        )
+    except RuntimeError as error:
+        raise SetupUnreachable(str(error)) from error
+
+
 @dataclass
 class PreparedCase:
     action: Callable[[], tuple[Submission, dict[str, Any]]]
     postcondition: Callable[[], None]
     setup: dict[str, Any]
+    before_action: Callable[[], None] = lambda: None
 
 
 def comparison_key(case: dict[str, Any]) -> str:
@@ -61,6 +85,12 @@ def fixed_cases(suite: dict[str, Any]) -> list[dict[str, Any]]:
         cases.append(
             {
                 "operation": "schedulePieceDeletions",
+                "parameters": {"batchSize": removal_batch_size},
+            }
+        )
+        cases.append(
+            {
+                "operation": "processPieceDeletions",
                 "parameters": {"batchSize": removal_batch_size},
             }
         )
@@ -121,6 +151,7 @@ def prepare_case(
     *,
     compact_empty_metadata: bool = False,
     compact_setup_metadata: bool = False,
+    separate_piece_deletions: bool = False,
 ) -> PreparedCase:
     operation = case["operation"]
     parameters = case.get("parameters", {})
@@ -152,7 +183,8 @@ def prepare_case(
     if operation == "addPieces":
         starting = int(parameters["startingPieceCount"])
         metadata = parameters["metadata"]
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             starting,
             metadata,
@@ -184,7 +216,8 @@ def prepare_case(
 
     if operation == "schedulePieceDeletions":
         batch_size = int(parameters["batchSize"])
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             batch_size + 1,
             parameters.get("metadata", "one"),
@@ -200,9 +233,50 @@ def prepare_case(
             setup,
         )
 
+    if operation == "processPieceDeletions":
+        batch_size = int(parameters["batchSize"])
+        _populate(
+            fixtures,
+            dataset,
+            batch_size + 1,
+            "one",
+            compact_empty_metadata=compact_setup_metadata,
+        )
+        piece_ids = list(range(batch_size))
+        try:
+            setup_receipt = fixtures.schedule(dataset, piece_ids)
+        except RuntimeError as error:
+            raise SetupUnreachable(str(error)) from error
+        setup["scheduleTransactionHash"] = setup_receipt["transactionHash"]
+
+        def postcondition() -> None:
+            leaf_count = fixtures.chain.call_uint(
+                pdp,
+                "getPieceLeafCount(uint256,uint256)(uint256)",
+                str(dataset.data_set_id),
+                "0",
+            )
+            if leaf_count != 0:
+                raise RuntimeError(
+                    "processPieceDeletions did not apply the first removal"
+                )
+
+        return PreparedCase(
+            lambda: (
+                fixtures.process_deletions_submission(dataset, batch_size),
+                {
+                    "dataSetId": dataset.data_set_id,
+                    "removedPieceCount": batch_size,
+                },
+            ),
+            postcondition,
+            setup,
+        )
+
     if operation == "nextProvingPeriod":
         removal_count = int(parameters["removalCount"])
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             removal_count + 1,
             parameters.get("metadata", "one"),
@@ -215,6 +289,17 @@ def prepare_case(
             raise SetupUnreachable(str(error)) from error
         setup["scheduleTransactionHash"] = setup_receipt["transactionHash"]
         challenge_holder: dict[str, int] = {}
+
+        def before_action() -> None:
+            if not separate_piece_deletions or not removal_count:
+                return
+            try:
+                process_receipt = fixtures.process_deletions(dataset, removal_count)
+            except RuntimeError as error:
+                raise SetupUnreachable(str(error)) from error
+            setup["processDeletionsTransactionHash"] = process_receipt[
+                "transactionHash"
+            ]
 
         def action() -> tuple[Submission, dict[str, Any]]:
             challenge, submission = fixtures.next_period_submission(dataset)
@@ -235,14 +320,15 @@ def prepare_case(
                 )
                 if leaf_count != 0:
                     raise RuntimeError(
-                        "nextProvingPeriod did not apply the first removal"
+                        "piece removal was not applied before nextProvingPeriod"
                     )
 
-        return PreparedCase(action, postcondition, setup)
+        return PreparedCase(action, postcondition, setup, before_action)
 
     if operation == "provePossession":
         challenges = int(parameters["challengeCount"])
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             128,
             "one",
@@ -263,7 +349,8 @@ def prepare_case(
         return PreparedCase(action, lambda: None, setup)
 
     if operation == "terminateService":
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             128,
             "one",
@@ -284,7 +371,8 @@ def prepare_case(
         state = parameters["state"]
         if state == "populated":
             piece_count = int(parameters["pieceCount"])
-            fixtures.populate(
+            _populate(
+                fixtures,
                 dataset,
                 piece_count,
                 "one",
@@ -328,25 +416,26 @@ def prepare_case(
         piece_count = max(
             batch_size, int(fixtures.suite["cases"]["populatedDeletePieces"])
         )
-        fixtures.populate(
+        _populate(
+            fixtures,
             dataset,
             piece_count,
             "one",
             compact_empty_metadata=compact_setup_metadata,
         )
-        pre_activation_settlement = fixtures.settle_before_activation(dataset)
-        setup["preActivationSettlementTransactionHash"] = pre_activation_settlement[
-            "transactionHash"
-        ]
-        _, activation = fixtures.activate(dataset)
-        setup["activationTransactionHash"] = activation["transactionHash"]
         try:
+            pre_activation_settlement = fixtures.settle_before_activation(dataset)
+            _, activation = fixtures.activate(dataset)
             settlement = fixtures.terminate_and_settle(dataset)
             deletion = _successful(
                 fixtures.delete_submission(dataset), "deleteDataSet setup"
             )
         except RuntimeError as error:
             raise SetupUnreachable(str(error)) from error
+        setup["preActivationSettlementTransactionHash"] = pre_activation_settlement[
+            "transactionHash"
+        ]
+        setup["activationTransactionHash"] = activation["transactionHash"]
         setup.update(
             {
                 "pieceCount": piece_count,

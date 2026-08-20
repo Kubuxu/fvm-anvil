@@ -102,6 +102,7 @@ class BuildManager:
         self.node_repo = node_repo
         self.records: dict[str, dict[str, Any]] = {}
         self.artifacts: dict[str, dict[str, Any]] = {}
+        self.library_artifacts: dict[str, dict[str, dict[str, Any]]] = {}
 
     def prepare(self, names: set[str]) -> None:
         for name in sorted(names):
@@ -141,9 +142,47 @@ class BuildManager:
         if spec["component"] == "fwss" and pdp_submodule.exists():
             sources.append(repository_capture(pdp_submodule))
         bytecode = artifact["bytecode"]["object"]
+        link_references = {
+            f"{source_path}:{library}"
+            for source_path, libraries in artifact["bytecode"]
+            .get("linkReferences", {})
+            .items()
+            for library in libraries
+        }
+        library_artifacts = {}
+        library_identities = {}
+        artifact_root = artifact_path.parents[1]
+        for reference in sorted(link_references):
+            source_path, library = reference.rsplit(":", 1)
+            library_path = artifact_root / Path(source_path).name / f"{library}.json"
+            library_artifact = json.loads(library_path.read_text())
+            compilation_target = (
+                library_artifact.get("metadata", {})
+                .get("settings", {})
+                .get("compilationTarget", {})
+            )
+            if compilation_target != {source_path: library}:
+                raise RuntimeError(
+                    f"artifact {library_path} does not compile linked library "
+                    f"{reference}: {compilation_target}"
+                )
+            nested_references = library_artifact["bytecode"].get("linkReferences", {})
+            if nested_references:
+                raise RuntimeError(
+                    f"direct library {reference} has unresolved linked libraries: "
+                    f"{nested_references}"
+                )
+            library_bytecode = library_artifact["bytecode"]["object"]
+            library_artifacts[reference] = library_artifact
+            library_identities[reference] = {
+                "artifact": str(library_path),
+                "creationBytecodeSha256": digest_bytes(library_bytecode.encode()),
+                "compiler": library_artifact.get("metadata", {}).get("compiler"),
+            }
         artifact_identity = {
             "creationBytecodeSha256": digest_bytes(bytecode.encode()),
             "compiler": artifact.get("metadata", {}).get("compiler"),
+            "libraries": library_identities,
         }
         identity = {
             "name": name,
@@ -169,6 +208,7 @@ class BuildManager:
         ]
         self.records[name] = identity
         self.artifacts[name] = artifact
+        self.library_artifacts[name] = library_artifacts
 
     def public_record(self, name: str) -> dict[str, Any]:
         return self.records[name]
@@ -188,6 +228,7 @@ class BuildManager:
         proxy = self.suite["contracts"][component]
         artifact = self.artifacts[build_name]
         creation = artifact["bytecode"]["object"]
+        library_deployments: dict[str, dict[str, Any]] = {}
         if component == "pdp":
             constructor = self.chain.abi_encode(
                 "f(uint64,uint256)",
@@ -196,15 +237,23 @@ class BuildManager:
             )
         else:
             contracts = self.suite["contracts"]
+            link_addresses = {}
+            for reference, library_artifact in self.library_artifacts[
+                build_name
+            ].items():
+                address, receipt = self.chain.deploy(
+                    library_artifact["bytecode"]["object"]
+                )
+                link_addresses[reference] = address
+                library_deployments[reference] = {
+                    "address": address,
+                    "runtimeBytecodeSha256": runtime_hash(self.chain, address),
+                    "deploymentReceipt": receipt,
+                }
             creation = link_bytecode(
                 creation,
                 artifact["bytecode"].get("linkReferences", {}),
-                {
-                    "src/lib/Rails.sol:Rails": contracts["railsLibrary"],
-                    "src/lib/SignatureVerificationLib.sol:SignatureVerificationLib": contracts[
-                        "signatureLibrary"
-                    ],
-                },
+                link_addresses,
             )
             constructor = self.chain.abi_encode(
                 "f(address,address,address,address,address,address,uint64)",
@@ -247,4 +296,5 @@ class BuildManager:
             "deploymentReceipt": deployment_receipt,
             "announcementReceipt": announcement,
             "upgradeReceipt": upgrade,
+            "libraries": library_deployments if component == "fwss" else {},
         }

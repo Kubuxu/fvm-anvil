@@ -37,6 +37,7 @@
       "kind": "local",
       "repository": "extern/pdp",
       "artifact": "out/PDPVerifier.sol/PDPVerifier.json",
+      "separatePieceDeletions": true,
       "upgradeCall": "migrate()"
     },
     "fwss-local": {

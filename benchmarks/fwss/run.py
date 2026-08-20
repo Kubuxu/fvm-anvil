@@ -226,7 +226,15 @@ class Runner:
             )
         for component, upgrade in upgrades.items():
             labels[upgrade["implementation"]] = f"{component.upper()} implementation"
+            for reference, library in upgrade.get("libraries", {}).items():
+                labels[library["address"]] = f"{reference.rsplit(':', 1)[1]} library"
         return labels
+
+    def _uses_separate_piece_deletions(self, variant_name: str) -> bool:
+        pdp_build = self.suite["variants"][variant_name]["pdp"]
+        return bool(
+            self.suite["builds"][pdp_build].get("separatePieceDeletions", False)
+        )
 
     def run_one(
         self, variant_name: str, case: dict[str, Any], *, force: bool = False
@@ -260,6 +268,22 @@ class Runner:
             }
             atomic_json(path, result)
             return result
+        separate_piece_deletions = self._uses_separate_piece_deletions(variant_name)
+        if (
+            case["operation"] == "processPieceDeletions"
+            and not separate_piece_deletions
+        ):
+            result = {
+                "schemaVersion": RESULT_SCHEMA,
+                "comparisonKey": key,
+                "measurementId": measurement_id,
+                "variant": variant_name,
+                "case": case,
+                "status": "not-applicable",
+                "reason": "the selected PDP build processes removals in nextProvingPeriod",
+            }
+            atomic_json(path, result)
+            return result
 
         try:
             if variant["fixtureCreation"] == "before-upgrades":
@@ -267,6 +291,7 @@ class Runner:
                     self.fixtures,
                     case,
                     compact_empty_metadata=compact_empty_metadata,
+                    separate_piece_deletions=separate_piece_deletions,
                 )
                 upgrades = self.manager.configure_variant(variant_name)
             else:
@@ -276,6 +301,7 @@ class Runner:
                     case,
                     compact_empty_metadata=compact_empty_metadata,
                     compact_setup_metadata=compact_empty_metadata,
+                    separate_piece_deletions=separate_piece_deletions,
                 )
         except SetupUnreachable as error:
             result = {
@@ -293,6 +319,20 @@ class Runner:
         self._write_variant(variant_name, upgrades)
         labels = self._labels(upgrades)
         print(f"run {variant_name}: {key}", file=sys.stderr, flush=True)
+        try:
+            prepared.before_action()
+        except SetupUnreachable as error:
+            result = {
+                "schemaVersion": RESULT_SCHEMA,
+                "comparisonKey": key,
+                "measurementId": measurement_id,
+                "variant": variant_name,
+                "case": case,
+                "status": "setup-unreachable",
+                "reason": str(error),
+            }
+            atomic_json(path, result)
+            return result
         measured = measure_prepared(self.chain, prepared, case, labels)
         result = {
             "schemaVersion": RESULT_SCHEMA,
@@ -335,6 +375,13 @@ class Runner:
         ceiling: int,
         force: bool,
     ) -> dict[str, Any]:
+        if (
+            operation == "processPieceDeletions"
+            and not self._uses_separate_piece_deletions(variant)
+        ):
+            raise ValueError(
+                "the selected PDP build processes removals in nextProvingPeriod"
+            )
         ceiling = capped_batch_size(operation, ceiling)
         self.prepare_builds([variant])
         self.initialize_chain()
@@ -347,6 +394,8 @@ class Runner:
                     "startingPieceCount": starting_count,
                 }
             elif operation == "schedulePieceDeletions":
+                parameters = {"batchSize": size}
+            elif operation == "processPieceDeletions":
                 parameters = {"batchSize": size}
             elif operation == "nextProvingPeriod":
                 parameters = {"removalCount": size, "metadata": metadata}
@@ -405,7 +454,9 @@ class Runner:
             "schemaVersion": RESULT_SCHEMA,
             "variant": variant,
             "operation": operation,
-            "metadata": metadata if operation == "addPieces" else None,
+            "metadata": (
+                metadata if operation in ("addPieces", "nextProvingPeriod") else None
+            ),
             "startingPieceCount": starting_count if operation == "addPieces" else None,
             "ceiling": ceiling,
             "status": status,
@@ -465,6 +516,7 @@ def parse_args() -> argparse.Namespace:
         choices=(
             "addPieces",
             "schedulePieceDeletions",
+            "processPieceDeletions",
             "nextProvingPeriod",
             "cleanupPieces",
         ),

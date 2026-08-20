@@ -71,7 +71,7 @@ $ benchmarks/fwss/run.py max-batch \
     --starting-piece-count 0
 ```
 
-The supported boundary operations are `addPieces`, `schedulePieceDeletions`, `nextProvingPeriod`, and `cleanupPieces`. Use `--ceiling` to override the configured search ceiling.
+The supported boundary operations are `addPieces`, `schedulePieceDeletions`, `processPieceDeletions`, `nextProvingPeriod`, and `cleanupPieces`. `processPieceDeletions` is not applicable to PDP builds that still process removals inside `nextProvingPeriod`. Use `--ceiling` to override the configured search ceiling.
 
 ## Report results
 

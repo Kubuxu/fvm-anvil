@@ -15,11 +15,12 @@ Measure the public transactions that invoke every supported FWSS callback:
 | `createDataSet` | `dataSetCreated` |
 | `addPieces` | `piecesAdded` |
 | `schedulePieceDeletions` | `piecesScheduledRemove` |
+| `processPieceDeletions` | None |
 | `nextProvingPeriod` | `nextProvingPeriod` |
 | `provePossession` | `possessionProven` |
 | `deleteDataSet` | `dataSetDeleted` |
 
-Measure `terminateService` as a direct FWSS lifecycle operation and `cleanupPieces` as the PDP teardown operation affected by storage layout. A deletion case may execute termination and settlement as unmeasured setup, but termination also has its own independent measured case.
+Measure `processPieceDeletions` as the PDP storage operation that applies queued removals, `terminateService` as a direct FWSS lifecycle operation, and `cleanupPieces` as the PDP teardown operation affected by storage layout. A deletion case may execute termination and settlement as unmeasured setup, but termination also has its own independent measured case.
 
 Do not benchmark `storageProviderChanged`. FWSS deliberately rejects it, and that known unsupported path does not help evaluate the planned changes.
 
@@ -27,7 +28,8 @@ The initial changes under comparison are:
 
 - a new PDPVerifier storage layout used only by data sets created after the upgrade, while existing data sets continue to use the legacy layout;
 - a changed PDPVerifier `PiecesAdded` event format;
-- removal of FWSS per-piece metadata storage, leaving that metadata in events only.
+- removal of FWSS per-piece metadata storage, leaving that metadata in events only;
+- resumable piece removals processed separately from `nextProvingPeriod`.
 
 The benchmark reports transaction and contract-call gas. It does not claim Solidity source-line attribution.
 
@@ -94,6 +96,7 @@ Example `suite.json` excerpt:
       "kind": "local",
       "repository": "/path/to/pdp",
       "artifact": "out/PDPVerifier.sol/PDPVerifier.json",
+      "separatePieceDeletions": true,
       "upgradeCall": "migrate()"
     },
     "fwss-no-piece-metadata": {
@@ -124,7 +127,14 @@ Example `suite.json` excerpt:
 }
 ```
 
-Adding a normal implementation variant requires only a build entry and a variant entry. Python changes are allowed only when a build introduces a genuinely different constructor or upgrade protocol.
+Adding a normal implementation variant requires only a build entry and a variant entry. Python changes are allowed only when a build introduces a genuinely different constructor, upgrade protocol, or public operation.
+
+Every link reference in a local implementation artifact is resolved to the
+matching Forge artifact, built from the same repository revision, included in
+the build fingerprint, deployed before the implementation, and linked at its
+new address. A missing, mismatched, or nested unresolved library artifact fails
+build preparation. Imported library addresses under `contracts` label the
+deployed baseline only; they are never linked into a local FWSS build.
 
 `fixtureCreation` means:
 
@@ -135,6 +145,12 @@ Set `compactEmptyMetadata` on a variant when its FWSS build accepts the compact
 empty-metadata representation. The runner then signs and submits empty outer
 metadata arrays for measured metadata-free `addPieces` calls. Setup performed
 before an upgrade remains expanded so it is valid against the imported FWSS.
+
+Set `separatePieceDeletions` on a PDP build that exposes
+`processPieceDeletions`. The runner measures that operation for those builds
+and processes queued removals as unmeasured setup before measuring
+`nextProvingPeriod`. The operation is `not-applicable` for older PDP builds;
+their `nextProvingPeriod` measurement continues to include PDP removal work.
 
 For the deployed variant, `after-upgrades` performs no upgrade. Its data sets use the deployed legacy layout.
 
@@ -310,9 +326,10 @@ Starting count is a real benchmark dimension: PDP tree/storage cost can differ b
 This is the piece-deletion benchmark. Prepare a populated data set with enough pieces for the requested size, using one metadata pair per piece so the current FWSS metadata cleanup cost is exercised. For every configured size where reachable, measure separately:
 
 - `schedulePieceDeletions`, which invokes `piecesScheduledRemove`;
-- the following `nextProvingPeriod`, which applies the removals and invokes the FWSS callback that currently deletes scheduled piece metadata.
+- `processPieceDeletions`, for PDP builds that apply queued removals in a separate resumable call;
+- the following `nextProvingPeriod`, which invokes the FWSS callback that deletes scheduled piece metadata.
 
-A failure to schedule means the next-period case is `setup-unreachable`, not a next-period failure.
+For older PDP builds, `processPieceDeletions` is `not-applicable` and `nextProvingPeriod` applies the queued removals itself. A failure to schedule or process removals means the next-period case is `setup-unreachable`, not a next-period failure.
 
 ### Proving possession
 
@@ -327,7 +344,7 @@ Measure independent cases for:
 - `deleteDataSet` for a populated data set after unmeasured termination, epoch advancement, and rail settlement;
 - fixed and maximum `cleanupPieces` batch sizes from an identical snapshot of the populated deleted data set.
 
-The measured `deleteDataSet` transaction invokes `dataSetDeleted`; it does not include the gas of termination or settlement. Those steps only construct the deletable fixture. Piece removals are measured separately in the preceding section because they exercise `piecesScheduledRemove` and `nextProvingPeriod`, while `cleanupPieces` measures the PDP storage teardown that follows whole-data-set deletion.
+The measured `deleteDataSet` transaction invokes `dataSetDeleted`; it does not include the gas of termination or settlement. Those steps only construct the deletable fixture. Piece removals are measured separately in the preceding section because they exercise `piecesScheduledRemove`, `processPieceDeletions` where supported, and `nextProvingPeriod`, while `cleanupPieces` measures the PDP storage teardown that follows whole-data-set deletion.
 
 ## Failure results
 
@@ -366,10 +383,11 @@ Discover separate boundaries for:
 
 - `addPieces` by metadata profile and starting state;
 - `schedulePieceDeletions`;
-- `nextProvingPeriod` applying removals;
+- `processPieceDeletions` where supported;
+- `nextProvingPeriod` applying FWSS removal effects;
 - `cleanupPieces`.
 
-The default ceiling is 4096. `schedulePieceDeletions` and the removal setup for `nextProvingPeriod` are capped at the contract's 2000-piece scheduling limit; other ceilings remain configurable.
+The default ceiling is 4096. `schedulePieceDeletions`, `processPieceDeletions`, and the removal setup for `nextProvingPeriod` are capped at the contract's 2000-piece scheduling limit; other ceilings remain configurable.
 
 ## Gas traces and component attribution
 
