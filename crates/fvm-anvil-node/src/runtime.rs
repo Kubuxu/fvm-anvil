@@ -46,6 +46,7 @@ const BLOCK_TIME_SECONDS: u64 = 1;
 const EAM_ACTOR_ID: u64 = 10;
 const PRELOAD_ACTORS: [&str; 4] = ["eam", "ethaccount", "evm", "placeholder"];
 const MAX_SIGNED_MESSAGE_SIZE: usize = 64 << 10;
+const GAS_ESTIMATION_MARGIN_DENOMINATOR: u64 = 4;
 const ERC20_BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
 const ERC20_ALLOWANCE_SELECTOR: [u8; 4] = [0xdd, 0x62, 0xed, 0x3e];
 const ERC20_MAX_BASE_SLOT: u64 = 255;
@@ -357,7 +358,7 @@ impl NodeRuntime {
         if !simulation.apply.msg_receipt.exit_code.is_success() {
             return Err(call_failure(&simulation.apply)?);
         }
-        Ok(simulation.apply.msg_receipt.gas_used)
+        Ok(gas_estimate_with_margin(simulation.apply.msg_receipt.gas_used, self.block_gas_limit))
     }
 
     pub(crate) fn block_number(&self) -> u64 {
@@ -1618,6 +1619,10 @@ fn call_failure(apply: &ApplyRet) -> Result<NodeError, NodeError> {
     Ok(NodeError::CallFailed { exit_code: apply.msg_receipt.exit_code.value(), detail, data })
 }
 
+fn gas_estimate_with_margin(gas_used: u64, maximum: u64) -> u64 {
+    gas_used.saturating_add(gas_used.div_ceil(GAS_ESTIMATION_MARGIN_DENOMINATOR)).min(maximum)
+}
+
 fn u256_to_token_amount(amount: U256) -> TokenAmount {
     TokenAmount::from_atto(BigInt::from_bytes_be(Sign::Plus, &amount.to_be_bytes::<32>()))
 }
@@ -1733,8 +1738,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
 
     use super::{
-        MAX_SIGNED_MESSAGE_SIZE, MiningSchedule, effective_gas_price, log_matches_filter,
-        validate_signed_message_size,
+        MAX_SIGNED_MESSAGE_SIZE, MiningSchedule, effective_gas_price, gas_estimate_with_margin,
+        log_matches_filter, validate_signed_message_size,
     };
     use crate::error::NodeError;
     use crate::types::{Log, LogFilter};
@@ -1746,6 +1751,14 @@ mod tests {
             validate_signed_message_size(MAX_SIGNED_MESSAGE_SIZE + 1),
             Err(NodeError::TransactionTooLarge { actual: 65_537, maximum: 65_536 })
         ));
+    }
+
+    #[test]
+    fn gas_estimate_reserves_twenty_percent_and_stays_within_block_limit() {
+        assert_eq!(gas_estimate_with_margin(100, 1_000), 125);
+        assert_eq!(gas_estimate_with_margin(101, 1_000), 127);
+        assert_eq!(gas_estimate_with_margin(900, 1_000), 1_000);
+        assert_eq!(gas_estimate_with_margin(u64::MAX, u64::MAX), u64::MAX);
     }
 
     #[test]

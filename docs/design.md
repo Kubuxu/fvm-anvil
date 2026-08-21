@@ -233,7 +233,8 @@ Ethereum RPC gas quantities deliberately represent Filecoin gas:
 - Receipt `effectiveGasPrice` follows EIP-1559:
   `min(maxFeePerGas, baseFeePerGas + maxPriorityFeePerGas)`. Exact Filecoin fee outputs remain
   available through `filecoin_getGasBreakdown`.
-- Gas estimation executes against FVM and searches for a successful Filecoin gas limit.
+- Gas estimation executes against FVM and returns observed gas use with a Lotus/Forest-compatible
+  margin that reserves 20% of the returned limit, capped by the configured block gas limit.
 
 FEVM contract context also follows Filecoin behavior:
 
