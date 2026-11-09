@@ -12,6 +12,8 @@ import urllib.request
 import urllib.parse
 import uuid
 
+from authorize import Authorization, storage_terms_id
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 COMPOSE = ['docker', 'compose', '-f', str(HERE / 'compose.yaml')]
@@ -20,7 +22,11 @@ def command(args, **kw):
     result = subprocess.run([str(x) for x in args], capture_output=True, text=True, **kw)
     if result.returncode:
         # Do not expose argv: authorization commands contain the signer key.
-        raise RuntimeError(f"{Path(args[0]).name} failed ({result.returncode}): {result.stderr.strip()}")
+        error = result.stderr.strip()
+        if '--private-key' in args:
+            secret = str(args[args.index('--private-key') + 1])
+            error = error.replace(secret, '[redacted]').replace(secret.removeprefix('0x'), '[redacted]')
+        raise RuntimeError(f"{Path(args[0]).name} failed ({result.returncode}): {error}")
     return result.stdout.strip()
 
 def sql(query):
@@ -74,6 +80,10 @@ def main():
     p.add_argument('--pdptool', type=Path, required=True)
     p.add_argument('--client', type=Path, required=True)
     p.add_argument('--timeout', type=int, default=1800)
+    p.add_argument('--storage-terms-id', type=storage_terms_id, help='Sign the six-field StorageTerms create payload')
+    p.add_argument('--deposit', type=int, help='Smallest token units; default 10 tokens at selected terms precision')
+    p.add_argument('--fund-token-balance', type=int, help='Locally set the signer ERC-20 balance before the real FilecoinPay deposit')
+    p.add_argument('--approve-provider', action='store_true', help='Require FWSS owner key and idempotently approve the registered provider')
     a = p.parse_args()
     service = urllib.parse.urlsplit(a.service_url)
     if service.scheme != 'http' or not service.hostname or service.path not in ('', '/'):
@@ -157,6 +167,12 @@ DirectAnnounceURLs = []
         wait_for(ready, 180, 'writable PDP HTTP')
         auth_path = a.work_dir / 'auth.json'
         authorize = ['python3', HERE / 'authorize.py', '--manifest', a.manifest.resolve(), '--rpc-url', a.rpc_url, '--private-key', a.private_key, '--provider-address', signer, '--service-url', a.service_url, '--output', auth_path]
+        for option, value in (('--storage-terms-id', a.storage_terms_id), ('--deposit', a.deposit),
+                              ('--fund-token-balance', a.fund_token_balance)):
+            if value is not None:
+                authorize.extend([option, str(value)])
+        if a.approve_provider:
+            authorize.append('--approve-provider')
         command(authorize)
         auth = json.loads(auth_path.read_text())
         loc, _ = post(a.service_url + '/pdp/data-sets', {'recordKeeper': env['CURIO_DEVNET_FWSS_ADDRESS'], 'extraData': auth['createExtraData']})
@@ -185,6 +201,10 @@ DirectAnnounceURLs = []
         if sql('SELECT count(*) FROM pdp_data_sets WHERE ipfs_indexing IS DISTINCT FROM false') != '0' or sql('SELECT count(*) FROM ipni') != '0':
             raise RuntimeError('indexing isolation violated')
         result = {'signer': signer, 'dataSetId': dataset, 'pieceId': piece_id, 'pieceCid': cid, 'createTx': create_hash, 'addTx': add_hash, 'proofTx': proof_hash}
+        if a.storage_terms_id is not None:
+            evidence = Authorization(a, manifest).verify_storage_terms(dataset, auth)
+            (a.work_dir / 'storage-terms-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
+            result['storageTermsAcceptance'] = evidence
         (a.work_dir / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         # Stop scheduling before the destructive snapshot/revert wire gate.
         stop()

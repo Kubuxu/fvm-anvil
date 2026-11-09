@@ -5,13 +5,18 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
 
+import urllib.parse
+
+from deploy_fwss import rpc
 
 DOMAIN_FIELDS = [
     {"name": "name", "type": "string"},
@@ -30,8 +35,10 @@ def cast(*arguments: str) -> str:
         ["cast", *map(str, arguments)], capture_output=True, text=True, check=False
     )
     if result.returncode:
-        # Never include the command line: it may contain the private key.
-        raise RuntimeError(result.stderr.strip())
+        error = result.stderr.strip()
+        if "--private-key" in arguments:
+            error = error.replace(str(arguments[arguments.index("--private-key") + 1]), "[redacted]")
+        raise RuntimeError(error)
     return result.stdout.strip()
 
 
@@ -53,6 +60,12 @@ def piece_bytes(value: str) -> str:
     return "0x" + raw.hex()
 
 
+def storage_terms_id(value: str) -> str:
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
+        raise argparse.ArgumentTypeError("storage terms ID must be a 0x-prefixed bytes32")
+    return value.lower()
+
+
 class Authorization:
     def __init__(self, args: argparse.Namespace, manifest: dict) -> None:
         self.args = args
@@ -60,6 +73,17 @@ class Authorization:
         self.contracts = manifest["contracts"]
         self.signer = cast("wallet", "address", "--private-key", args.private_key)
         actual_chain = int(cast("chain-id", "--rpc-url", args.rpc_url))
+        endpoint = urllib.parse.urlsplit(args.rpc_url)
+        try:
+            loopback = ipaddress.ip_address(endpoint.hostname or "").is_loopback
+        except ValueError:
+            loopback = endpoint.hostname == "localhost"
+        if endpoint.scheme not in ("http", "https") or not loopback or endpoint.username or endpoint.password:
+            raise ValueError("Authorization requires a loopback HTTP RPC URL")
+        version = rpc(args.rpc_url, "web3_clientVersion", [])
+        if not isinstance(version, str) or "fvm-anvil" not in version.lower():
+            raise ValueError("Authorization requires a local fvm-anvil node")
+        self.local_evidence = {"clientVersion": version, "stateRoots": self.state_roots()}
         if actual_chain != int(manifest["chainId"]):
             raise ValueError("Deployment manifest chain ID differs from the live node")
         self.chain_id = actual_chain
@@ -70,12 +94,41 @@ class Authorization:
     def uint(self, address: str, signature: str, *arguments: str) -> int:
         return int(self.call(address, signature, *arguments).split()[0])
 
+
+    def state_roots(self) -> dict:
+        roots = rpc(self.args.rpc_url, "filecoin_getStateRoots", [])
+        if not isinstance(roots, dict) or not roots.get("current") or "prepared" not in roots:
+            raise ValueError("fvm-anvil did not return prepared/current state roots")
+        return roots
+
+    def words(self, address: str, signature: str, *arguments: str) -> list[str]:
+        """Decode all-static ABI results without depending on cast's display formatting."""
+        data = self.call(address, signature, *arguments)
+        if not re.fullmatch(r"0x(?:[0-9a-fA-F]{64})+", data):
+            raise ValueError(f"Invalid static ABI result for {signature}")
+        return [data[offset:offset + 64] for offset in range(2, len(data), 64)]
+
+    def terms(self, terms_id: str) -> dict:
+        words = self.words(self.contracts["fwss"], "getStorageTerms(bytes32)", terms_id)
+        if len(words) != 5:
+            raise ValueError("Unexpected getStorageTerms result")
+        token = "0x" + words[0][-40:]
+        decimals = int(words[1], 16)
+        if decimals > 18:
+            raise ValueError("Storage terms precision exceeds the supported 18 decimals")
+        if int(token, 16) != 0 and self.uint(token, "decimals()(uint8)") != decimals:
+            raise ValueError("Registered storage terms decimals differ from the live token")
+        return {"id": terms_id, "token": token, "tokenDecimals": decimals,
+                "salt": "0x" + words[2], "pricePerTiBPerMonth": int(words[3], 16),
+                "enabled": bool(int(words[4], 16))}
+
     def send(self, address: str, signature: str, *arguments: str, value: int = 0) -> dict:
         print(f"Submitting {signature}", file=sys.stderr)
+        gas_price = int(rpc(self.args.rpc_url, "eth_gasPrice", []), 16)
         tx_hash = cast(
             "send", "--async", "--rpc-url", self.args.rpc_url,
             "--private-key", self.args.private_key,
-            "--gas-limit", "10000000000", "--gas-price", "200", "--priority-gas-price", "1",
+            "--gas-limit", "10000000000", "--gas-price", str(gas_price), "--priority-gas-price", "1",
             "--value", str(value), address, signature, *arguments,
         )
         deadline = time.monotonic() + self.args.timeout
@@ -104,8 +157,21 @@ class Authorization:
     def create(self) -> dict:
         provider = self.args.provider_address or self.signer
         registry = self.contracts["registry"]
-        token = self.contracts["token"]
         client_id = self.args.client_data_set_id
+        terms = self.terms(self.args.storage_terms_id) if self.args.storage_terms_id is not None else None
+        if terms is not None and not terms["enabled"]:
+            raise ValueError("Selected storage terms are disabled")
+        token = terms["token"] if terms is not None else self.contracts["token"]
+        decimals = terms["tokenDecimals"] if terms is not None else 18
+        amount = self.args.deposit if self.args.deposit is not None else 10 * 10**decimals
+        if amount <= 0 or amount >= 2**256:
+            raise ValueError("Deposit must be a positive uint256 in the token's smallest units")
+        native = int(token, 16) == 0
+        if self.args.fund_token_balance is not None and (native or not 0 <= self.args.fund_token_balance < 2**256):
+            raise ValueError("--fund-token-balance requires an ERC-20 token and a uint256 balance")
+        fwss = self.contracts["fwss"]
+        if self.args.approve_provider and self.call(fwss, "owner()(address)").lower() != self.signer.lower():
+            raise ValueError("--approve-provider requires the FWSS owner signing key")
         if client_id is None:
             client_id = self.uint(self.contracts["pdp"], "getNextDataSetId()(uint64)")
             while self.uint(self.contracts["fwss"], "clientNonces(address,uint256)(uint256)", self.signer, str(client_id)):
@@ -136,28 +202,121 @@ class Authorization:
         if provider_id == 0:
             raise RuntimeError("Provider registration did not produce a provider ID")
         payee = self.call(registry, "getProviderPayee(uint256)(address)", str(provider_id)).strip()
-        amount = self.args.deposit
-        balance = self.uint(token, "balanceOf(address)(uint256)", self.signer)
+        approval = None
+        if self.args.approve_provider:
+            already_approved = self.call(fwss, "isProviderApproved(uint256)(bool)", str(provider_id)) == "true"
+            if not already_approved:
+                receipts.append(self.send(fwss, "addApprovedProvider(uint256)", str(provider_id)))
+            if self.call(fwss, "isProviderApproved(uint256)(bool)", str(provider_id)) != "true":
+                raise RuntimeError("FWSS provider approval was not stored")
+            # Candidate 371e8b0a requires registry membership, not an endorsement-set entry.
+            approval = {"providerId": provider_id, "alreadyApproved": already_approved, "approved": True}
+        funding = None
+        if self.args.fund_token_balance is not None:
+            code = rpc(self.args.rpc_url, "eth_getCode", [token, "latest"])
+            if code in ("0x", "0x0"):
+                raise ValueError("Selected payment token has no runtime code")
+            before = self.uint(token, "balanceOf(address)(uint256)", self.signer)
+            roots_before = self.state_roots()
+            rpc(self.args.rpc_url, "anvil_setERC20Balance", [self.signer, token, hex(self.args.fund_token_balance)])
+            balance = self.uint(token, "balanceOf(address)(uint256)", self.signer)
+            if balance != self.args.fund_token_balance:
+                raise RuntimeError("Local ERC-20 funding did not set the requested balance")
+            if rpc(self.args.rpc_url, "eth_getCode", [token, "latest"]) != code:
+                raise RuntimeError("Local ERC-20 funding changed the token runtime code")
+            funding = {"method": "anvil_setERC20Balance", "token": token, "owner": self.signer,
+                       "balanceBefore": before, "balanceAfter": balance,
+                       "runtimeCodeHash": cast("keccak", code), "runtimeCodePreserved": True,
+                       "stateRootsBefore": roots_before, "stateRootsAfter": self.state_roots()}
+        balance = (int(rpc(self.args.rpc_url, "eth_getBalance", [self.signer, "latest"]), 16)
+                   if native else self.uint(token, "balanceOf(address)(uint256)", self.signer))
         if balance < amount:
             raise ValueError(f"Payment-token balance {balance} is below requested deposit {amount}")
-        receipts.append(self.send(token, "approve(address,uint256)", self.contracts["payments"], str(amount)))
-        receipts.append(self.send(self.contracts["payments"], "deposit(address,address,uint256)",
-                                  token, self.signer, str(amount)))
+        if not native:
+            receipts.append(self.send(token, "approve(address,uint256)", self.contracts["payments"], str(amount)))
+        funds_before = int(self.words(self.contracts["payments"], "accounts(address,address)", token, self.signer)[0], 16)
+        deposit_receipt = self.send(self.contracts["payments"], "deposit(address,address,uint256)",
+                                    token, self.signer, str(amount), value=amount if native else 0)
+        receipts.append(deposit_receipt)
+        funds_after = int(self.words(self.contracts["payments"], "accounts(address,address)", token, self.signer)[0], 16)
+        if funds_after < funds_before + amount:
+            raise RuntimeError("FilecoinPay deposit did not credit the requested amount")
         receipts.append(self.send(
             self.contracts["payments"], "setOperatorApproval(address,address,bool,uint256,uint256,uint256)",
             token, self.contracts["fwss"], "true", str(amount), str(amount), "31536000",
         ))
-        signature = self.sign("CreateDataSet", [
+        fields = [
             {"name": "clientDataSetId", "type": "uint256"},
             {"name": "payee", "type": "address"},
             {"name": "metadata", "type": "MetadataEntry[]"},
-        ], {"clientDataSetId": client_id, "payee": payee, "metadata": []})
-        extra = cast("abi-encode", "f(address,uint256,string[],string[],bytes)",
-                     self.signer, str(client_id), "[]", "[]", signature)
+        ]
+        message = {"clientDataSetId": client_id, "payee": payee, "metadata": []}
+        primary_type = "CreateDataSet"
+        encoding = "f(address,uint256,string[],string[],bytes)"
+        tail = []
+        if terms is not None:
+            primary_type = "CreateDataSetWithStorageTerms"
+            fields.append({"name": "storageTermsId", "type": "bytes32"})
+            message["storageTermsId"] = terms["id"]
+            encoding = "f(address,uint256,string[],string[],bytes,bytes32)"
+            tail.append(terms["id"])
+        signature = self.sign(primary_type, fields, message)
+        extra = cast("abi-encode", encoding, self.signer, str(client_id), "[]", "[]", signature, *tail)
         return {"providerId": provider_id, "provider": provider, "payer": self.signer,
                 "clientDataSetId": client_id, "nextNonce": client_id + 1,
-                "createExtraData": extra, "metadataKeys": [],
+                "createExtraData": extra, "metadataKeys": [], "signatureType": primary_type,
+                "storageTerms": terms, "paymentToken": token, "tokenDecimals": decimals,
+                "deposit": {"amount": amount, "fundsBefore": funds_before, "fundsAfter": funds_after,
+                            "transactionHash": deposit_receipt["transactionHash"]},
+                "localNode": self.local_evidence, "localTokenFunding": funding,
+                "providerApproval": approval, "setupReceipts": receipts,
                 "setupTransactions": [r["transactionHash"] for r in receipts]}
+
+    def verify_storage_terms(self, data_set_id: str, authorization: dict) -> dict:
+        selected = authorization["storageTerms"]
+        terms = self.terms(selected["id"])
+        for key in ("token", "tokenDecimals", "salt", "pricePerTiBPerMonth"):
+            if terms[key] != selected[key]:
+                raise RuntimeError("Selected immutable storage terms changed since authorization")
+        words = self.words(self.contracts["fwss"], "getDataSetV2(uint256)", data_set_id)
+        if len(words) != 14:
+            raise RuntimeError("Unexpected getDataSetV2 result")
+        names = ("dataSetId", "pdpRailId", "cacheMissRailId", "cdnRailId", "payer", "payee",
+                 "serviceProvider", "commissionBps", "clientDataSetId", "pdpEndEpoch", "providerId",
+                 "pendingOneTimePayments", "lifecycleReserveBalance", "storageTermsId")
+        info = {name: ("0x" + word[-40:] if name in ("payer", "payee", "serviceProvider") else
+                       "0x" + word if name == "storageTermsId" else int(word, 16))
+                for name, word in zip(names, words)}
+        if info["dataSetId"] != int(data_set_id) or info["storageTermsId"] != selected["id"]:
+            raise RuntimeError("getDataSetV2 does not store the selected storage terms")
+        if info["payer"].lower() != self.signer.lower():
+            raise RuntimeError("getDataSetV2 payer differs from the signer")
+        rail_words = self.words(self.contracts["payments"], "getRail(uint256)", str(info["pdpRailId"]))
+        if len(rail_words) != 12:
+            raise RuntimeError("Unexpected FilecoinPay getRail result")
+        rail_names = ("token", "from", "to", "operator", "validator", "paymentRate", "lockupPeriod",
+                      "lockupFixed", "settledUpTo", "endEpoch", "commissionRateBps", "serviceFeeRecipient")
+        rail = {name: ("0x" + word[-40:] if index < 5 or index == 11 else int(word, 16))
+                for index, (name, word) in enumerate(zip(rail_names, rail_words))}
+        if rail["token"].lower() != terms["token"].lower() or rail["from"].lower() != self.signer.lower():
+            raise RuntimeError("FilecoinPay rail currency or payer differs from the signed terms")
+        if rail["operator"].lower() != self.contracts["fwss"].lower() or rail["to"].lower() != info["payee"].lower():
+            raise RuntimeError("FilecoinPay rail operator or payee differs from FWSS")
+        leaves = self.uint(self.contracts["pdp"], "getDataSetLeafCount(uint256)(uint256)", data_set_id)
+        raw_size = leaves * 32 * 127 // 128
+        # StoragePricing at candidate 371e8b0a: floor raw-size monthly storage first,
+        # add the 18-decimal catalogue's scaled dataset fee, then floor per epoch.
+        prices = self.words(self.contracts["fwss"], "getCurrentPricingRates()")
+        dataset_fee = int(prices[1], 16) // 10**(18 - terms["tokenDecimals"])
+        monthly_storage = raw_size * terms["pricePerTiBPerMonth"] // (1 << 40)
+        epochs_per_month = 2880 * 30
+        expected_rate = (monthly_storage + dataset_fee) // epochs_per_month if leaves else 0
+        if leaves == 0 or rail["paymentRate"] != expected_rate:
+            raise RuntimeError(f"FilecoinPay rail rate {rail['paymentRate']} differs from actual leafcount terms rate {expected_rate}")
+        return {"storageTerms": terms, "dataSet": info, "rail": rail, "leafCount": leaves,
+                "rawSizeBytes": raw_size, "monthlyStorage": monthly_storage,
+                "datasetFeePerMonth": dataset_fee, "epochsPerMonth": epochs_per_month,
+                "expectedPaymentRate": expected_rate, "stateRoots": self.state_roots()}
 
     def add(self, authorization: dict) -> dict:
         if authorization["payer"].lower() != self.signer.lower():
@@ -194,7 +353,10 @@ def main() -> None:
     parser.add_argument("--service-url", default="http://127.0.0.1:4702")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--operation", choices=("create", "add"), default="create")
-    parser.add_argument("--deposit", type=int, default=10 * 10**18)
+    parser.add_argument("--deposit", type=int, help="Smallest token units; default 10 tokens (selected terms precision)")
+    parser.add_argument("--storage-terms-id", type=storage_terms_id, help="Registered enabled terms; uses the six-field signed payload, including explicit ID zero")
+    parser.add_argument("--fund-token-balance", type=int, help="Locally set the signer's ERC-20 balance in smallest units before the real deposit")
+    parser.add_argument("--approve-provider", action="store_true", help="As FWSS owner, approve the provider if not already approved")
     parser.add_argument("--client-data-set-id", type=int)
     parser.add_argument("--data-set-id", type=int)
     parser.add_argument("--piece-cids", nargs="+")

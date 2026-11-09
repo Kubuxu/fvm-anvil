@@ -1,7 +1,7 @@
 // Copyright 2026 Kubuxu
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Builtin-actors v18 EVM state mutation and inspection.
+//! Shared builtin-actors v18/v19 EVM state mutation and inspection.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -22,17 +22,22 @@ use thiserror::Error;
 use crate::prepared::{PreparedBytecodePatch, PreparedStoragePatch};
 
 const EVM_ACTOR_CODE_V18: &str = "bafk2bzacea57ib7fosqleehx5z6uvockk3xk5wqycmge5m4rfq4ptr7xrkfsi";
+const EVM_ACTOR_CODE_V19: &str = "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm";
 const MAX_CODE_SIZE: usize = 24 << 10;
-const EVM_STATE_KAMT_CONFIG_V18: KamtConfig =
+// Adapted from builtin-actors v18.0.0 and v19.0.1 (Protocol Labs, MIT OR Apache-2.0):
+// actors/evm/src/{state.rs,interpreter/system.rs} and actors/evm/shared/src/uints.rs.
+// Both releases use the same tuple, zero-trimmed big-endian words, and unhashed 32-byte KAMT keys.
+const EVM_STATE_KAMT_CONFIG: KamtConfig =
     KamtConfig { min_data_depth: 0, bit_width: 5, max_array_width: 1 };
-static EVM_ACTOR_CODE: LazyLock<Cid> = LazyLock::new(|| {
-    Cid::from_str(EVM_ACTOR_CODE_V18).expect("builtin-actors v18 EVM code CID is valid")
+static EVM_ACTOR_CODES: LazyLock<[Cid; 2]> = LazyLock::new(|| {
+    [EVM_ACTOR_CODE_V18, EVM_ACTOR_CODE_V19]
+        .map(|code| Cid::from_str(code).expect("builtin-actors v18/v19 EVM code CID is valid"))
 });
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-struct EvmWordV18(U256);
+struct EvmWord(U256);
 
-impl Serialize for EvmWordV18 {
+impl Serialize for EvmWord {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -43,7 +48,7 @@ impl Serialize for EvmWordV18 {
     }
 }
 
-impl<'de> Deserialize<'de> for EvmWordV18 {
+impl<'de> Deserialize<'de> for EvmWord {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -51,7 +56,7 @@ impl<'de> Deserialize<'de> for EvmWordV18 {
         struct WordVisitor;
 
         impl serde::de::Visitor<'_> for WordVisitor {
-            type Value = EvmWordV18;
+            type Value = EvmWord;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("an EVM word encoded in at most 32 big-endian bytes")
@@ -64,7 +69,7 @@ impl<'de> Deserialize<'de> for EvmWordV18 {
                 if bytes.len() > 32 {
                     return Err(E::invalid_length(bytes.len(), &self));
                 }
-                Ok(EvmWordV18(U256::from_be_slice(bytes)))
+                Ok(EvmWord(U256::from_be_slice(bytes)))
             }
         }
 
@@ -72,46 +77,46 @@ impl<'de> Deserialize<'de> for EvmWordV18 {
     }
 }
 
-struct StateHashAlgorithmV18;
+struct StateHashAlgorithm;
 
-impl AsHashedKey<EvmWordV18, 32> for StateHashAlgorithmV18 {
-    fn as_hashed_key(key: &EvmWordV18) -> Cow<'_, HashedKey<32>> {
+impl AsHashedKey<EvmWord, 32> for StateHashAlgorithm {
+    fn as_hashed_key(key: &EvmWord) -> Cow<'_, HashedKey<32>> {
         Cow::Owned(key.0.to_be_bytes())
     }
 }
 
-type EvmStateKamtV18<BS> = Kamt<BS, EvmWordV18, EvmWordV18, StateHashAlgorithmV18>;
+type EvmStateKamt<BS> = Kamt<BS, EvmWord, EvmWord, StateHashAlgorithm>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(transparent)]
-struct BytecodeHashV18(#[serde(with = "fvm_ipld_encoding::strict_bytes")] [u8; 32]);
+struct BytecodeHash(#[serde(with = "fvm_ipld_encoding::strict_bytes")] [u8; 32]);
 
 #[derive(Clone, Debug, Deserialize_tuple, Serialize_tuple)]
-struct TransientDataV18 {
+struct TransientData {
     transient_data_state: Cid,
-    transient_data_lifespan: TransientDataLifespanV18,
+    transient_data_lifespan: TransientDataLifespan,
 }
 
 #[derive(Clone, Debug, Deserialize_tuple, Serialize_tuple)]
-struct TransientDataLifespanV18 {
+struct TransientDataLifespan {
     origin: u64,
     nonce: u64,
 }
 
 #[derive(Clone, Debug, Deserialize_tuple, Serialize_tuple)]
-struct TombstoneV18 {
+struct Tombstone {
     origin: u64,
     nonce: u64,
 }
 
 #[derive(Clone, Debug, Deserialize_tuple, Serialize_tuple)]
-pub struct EvmStateV18 {
+pub struct EvmState {
     bytecode: Cid,
-    bytecode_hash: BytecodeHashV18,
+    bytecode_hash: BytecodeHash,
     contract_state: Cid,
-    transient_data: Option<TransientDataV18>,
+    transient_data: Option<TransientData>,
     nonce: u64,
-    tombstone: Option<TombstoneV18>,
+    tombstone: Option<Tombstone>,
 }
 
 struct PatchStore<'a, BS> {
@@ -151,7 +156,7 @@ pub(crate) struct EvmStateView {
     pub contract_state: Cid,
 }
 
-/// One bytecode replacement applied to builtin-actors v18 EVM state.
+/// One bytecode replacement applied to builtin-actors v18/v19 EVM state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EvmBytecodeUpdate {
     pub previous: Cid,
@@ -160,7 +165,7 @@ pub struct EvmBytecodeUpdate {
     pub replacement_hash: [u8; 32],
 }
 
-/// One storage replacement applied to builtin-actors v18 EVM state.
+/// One storage replacement applied to builtin-actors v18/v19 EVM state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EvmStorageUpdate {
     pub key: [u8; 32],
@@ -168,10 +173,10 @@ pub struct EvmStorageUpdate {
     pub replacement: [u8; 32],
 }
 
-/// Errors while reading or mutating builtin-actors v18 EVM state.
+/// Errors while reading or mutating builtin-actors v18/v19 EVM state.
 #[derive(Debug, Error)]
 pub enum EvmPatchError {
-    #[error("actor code {0} is not builtin-actors v18 EVM code")]
+    #[error("actor code {0} is not builtin-actors v18/v19 EVM code")]
     NotEvmActor(Box<Cid>),
     #[error("EVM state block {0} is missing")]
     MissingState(Box<Cid>),
@@ -187,8 +192,8 @@ pub enum EvmPatchError {
     Storage(String),
 }
 
-impl EvmStateV18 {
-    /// Loads builtin-actors v18 EVM state from its state root.
+impl EvmState {
+    /// Loads builtin-actors v18/v19 EVM state from its shared state tuple.
     pub fn load<BS: Blockstore>(store: &BS, state_root: &Cid) -> Result<Self, EvmPatchError> {
         store
             .get_cbor::<Self>(state_root)
@@ -199,19 +204,19 @@ impl EvmStateV18 {
             .ok_or_else(|| EvmPatchError::MissingState(Box::new(*state_root)))
     }
 
-    /// Creates new builtin-actors v18 EVM state with empty storage.
+    /// Creates new builtin-actors v18/v19 EVM state with empty storage.
     pub fn create<BS: Blockstore>(
         store: &BS,
         bytecode: &[u8],
         nonce: u64,
     ) -> Result<Self, EvmPatchError> {
         let (bytecode, bytecode_hash) = write_bytecode(store, bytecode)?;
-        let mut slots = EvmStateKamtV18::new_with_config(store, EVM_STATE_KAMT_CONFIG_V18.clone());
+        let mut slots = EvmStateKamt::new_with_config(store, EVM_STATE_KAMT_CONFIG.clone());
         let contract_state =
             slots.flush().map_err(|error| EvmPatchError::Storage(error.to_string()))?;
         Ok(Self {
             bytecode,
-            bytecode_hash: BytecodeHashV18(bytecode_hash),
+            bytecode_hash: BytecodeHash(bytecode_hash),
             contract_state,
             transient_data: None,
             nonce,
@@ -249,7 +254,7 @@ impl EvmStateV18 {
         let previous_hash = self.bytecode_hash.0;
         let (replacement, replacement_hash) = write_bytecode(store, replacement)?;
         self.bytecode = replacement;
-        self.bytecode_hash = BytecodeHashV18(replacement_hash);
+        self.bytecode_hash = BytecodeHash(replacement_hash);
         Ok(EvmBytecodeUpdate { previous, previous_hash, replacement, replacement_hash })
     }
 
@@ -267,10 +272,10 @@ impl EvmStateV18 {
         if replacements.is_empty() {
             return Ok(Vec::new());
         }
-        let mut slots = EvmStateKamtV18::load_with_config(
+        let mut slots = EvmStateKamt::load_with_config(
             &self.contract_state,
             store,
-            EVM_STATE_KAMT_CONFIG_V18.clone(),
+            EVM_STATE_KAMT_CONFIG.clone(),
         )
         .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
         let mut updates = Vec::with_capacity(replacements.len());
@@ -289,10 +294,10 @@ impl EvmStateV18 {
         key: [u8; 32],
         replacement: [u8; 32],
     ) -> Result<EvmStorageUpdate, EvmPatchError> {
-        let mut slots = EvmStateKamtV18::load_with_config(
+        let mut slots = EvmStateKamt::load_with_config(
             &self.contract_state,
             store,
-            EVM_STATE_KAMT_CONFIG_V18.clone(),
+            EVM_STATE_KAMT_CONFIG.clone(),
         )
         .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
         let update = replace_storage_value(&mut slots, key, replacement)?;
@@ -324,11 +329,11 @@ impl EvmStateV18 {
 }
 
 fn replace_storage_value<BS: Blockstore>(
-    slots: &mut EvmStateKamtV18<BS>,
+    slots: &mut EvmStateKamt<BS>,
     key: [u8; 32],
     replacement: [u8; 32],
 ) -> Result<EvmStorageUpdate, EvmPatchError> {
-    let key_word = EvmWordV18(U256::from_be_bytes(key));
+    let key_word = EvmWord(U256::from_be_bytes(key));
     let previous = slots
         .get(&key_word)
         .map_err(|error| EvmPatchError::Storage(error.to_string()))?
@@ -336,7 +341,7 @@ fn replace_storage_value<BS: Blockstore>(
         .unwrap_or_default()
         .0
         .to_be_bytes();
-    let replacement_word = EvmWordV18(U256::from_be_bytes(replacement));
+    let replacement_word = EvmWord(U256::from_be_bytes(replacement));
     if replacement_word.0.is_zero() {
         slots.delete(&key_word).map_err(|error| EvmPatchError::Storage(error.to_string()))?;
     } else {
@@ -359,7 +364,7 @@ fn write_bytecode<BS: Blockstore>(
 }
 
 pub(crate) fn is_evm_actor_code(code: &Cid) -> bool {
-    code == &*EVM_ACTOR_CODE
+    EVM_ACTOR_CODES.contains(code)
 }
 
 pub(crate) fn validate_runtime_code(bytecode: &[u8]) -> Result<(), EvmPatchError> {
@@ -384,7 +389,7 @@ pub(crate) fn apply_evm_patch<BS: Blockstore>(
         return Err(EvmPatchError::NotEvmActor(Box::new(*actor_code)));
     }
     let store = PatchStore { source, output };
-    let mut state = EvmStateV18::load(&store, state_root)?;
+    let mut state = EvmState::load(&store, state_root)?;
 
     let runtime_code = runtime_code
         .map(|replacement| {
@@ -415,7 +420,7 @@ pub(crate) fn inspect_evm_state(
     store: &impl Blockstore,
     state_root: &Cid,
 ) -> Result<EvmStateView, EvmPatchError> {
-    let state = EvmStateV18::load(store, state_root)?;
+    let state = EvmState::load(store, state_root)?;
     Ok(EvmStateView {
         bytecode: state.bytecode(),
         bytecode_hash: state.bytecode_hash(),
@@ -428,10 +433,10 @@ pub(crate) fn read_storage(
     state_root: &Cid,
     key: [u8; 32],
 ) -> Result<[u8; 32], EvmPatchError> {
-    let slots = EvmStateKamtV18::load_with_config(state_root, store, EVM_STATE_KAMT_CONFIG_V18)
+    let slots = EvmStateKamt::load_with_config(state_root, store, EVM_STATE_KAMT_CONFIG)
         .map_err(|error| EvmPatchError::Storage(error.to_string()))?;
     let value = slots
-        .get(&EvmWordV18(U256::from_be_bytes(key)))
+        .get(&EvmWord(U256::from_be_bytes(key)))
         .map_err(|error| EvmPatchError::Storage(error.to_string()))?
         .copied()
         .unwrap_or_default();
@@ -441,30 +446,99 @@ pub(crate) fn read_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fvm_ipld_encoding::{BytesSer, from_slice, to_vec};
+
+    #[test]
+    fn word_encoding_and_kamt_keys_match_shared_actor_schema() {
+        for (value, encoded) in
+            [(U256::ZERO, vec![0x40]), (U256::from(0x0102), vec![0x42, 0x01, 0x02])]
+        {
+            assert_eq!(to_vec(&EvmWord(value)).unwrap(), encoded);
+            assert_eq!(from_slice::<EvmWord>(&encoded).unwrap().0, value);
+        }
+        let key = [0xab; 32];
+        let word = EvmWord(U256::from_be_bytes(key));
+        assert_eq!(to_vec(&word).unwrap(), to_vec(&BytesSer(&key)).unwrap());
+        assert_eq!(StateHashAlgorithm::as_hashed_key(&word).as_ref(), &key);
+        let oversized = to_vec(&BytesSer(&[0_u8; 33])).unwrap();
+        assert!(from_slice::<EvmWord>(&oversized).is_err());
+    }
+
+    #[test]
+    fn shared_state_tuple_round_trips_transient_data_and_tombstone() {
+        let store = MemoryBlockstore::default();
+        let bytecode = store.put(Code::Blake2b256, &Block::new(IPLD_RAW, [])).unwrap();
+        let hash = keccak256([]).0;
+        let slots = EvmStateKamt::new_with_config(&store, EVM_STATE_KAMT_CONFIG).flush().unwrap();
+        let root = store
+            .put_cbor(
+                &(
+                    bytecode,
+                    BytesSer(&hash),
+                    slots,
+                    Some((slots, (100_u64, 7_u64))),
+                    9_u64,
+                    Some((101_u64, 8_u64)),
+                ),
+                Code::Blake2b256,
+            )
+            .unwrap();
+        let state = EvmState::load(&store, &root).unwrap();
+        assert_eq!(state.bytecode(), bytecode);
+        assert_eq!(state.bytecode_hash(), hash);
+        assert_eq!(state.contract_state(), slots);
+        assert_eq!(state.nonce(), 9);
+        assert_eq!(state.flush(&store, &root).unwrap(), root);
+    }
+
+    #[test]
+    fn rejects_unrelated_actor_code_without_patching_state() {
+        let source = MemoryBlockstore::default();
+        let state = EvmState::create(&source, &[0x00], 0).unwrap();
+        let root = source.put_cbor(&state, Code::Blake2b256).unwrap();
+        let unrelated = source.put(Code::Blake2b256, &Block::new(IPLD_RAW, b"not EVM")).unwrap();
+        let error = apply_evm_patch(
+            &source,
+            Rc::new(MemoryBlockstore::default()),
+            &unrelated,
+            &root,
+            Some(&[0x60, 0x00]),
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, EvmPatchError::NotEvmActor(code) if *code == unrelated));
+        assert_eq!(EvmState::load(&source, &root).unwrap().bytecode(), state.bytecode());
+    }
 
     #[test]
     fn replaces_bytecode_and_batches_storage_updates() {
+        for actor_code in EVM_ACTOR_CODES.iter() {
+            assert_replaces_bytecode_and_storage(actor_code);
+        }
+    }
+
+    fn assert_replaces_bytecode_and_storage(actor_code: &Cid) {
         let source = Rc::new(MemoryBlockstore::default());
         let old_code = b"old runtime";
         let old_code_cid = source.put(Code::Blake2b256, &Block::new(IPLD_RAW, old_code)).unwrap();
-        let mut slots =
-            EvmStateKamtV18::new_with_config(Rc::clone(&source), EVM_STATE_KAMT_CONFIG_V18);
+        let mut slots = EvmStateKamt::new_with_config(Rc::clone(&source), EVM_STATE_KAMT_CONFIG);
         let replaced_key = [1_u8; 32];
         let deleted_key = [2_u8; 32];
-        slots
-            .set(EvmWordV18(U256::from_be_bytes(replaced_key)), EvmWordV18(U256::from(3)))
-            .unwrap();
-        slots.set(EvmWordV18(U256::from_be_bytes(deleted_key)), EvmWordV18(U256::from(4))).unwrap();
+        slots.set(EvmWord(U256::from_be_bytes(replaced_key)), EvmWord(U256::from(3))).unwrap();
+        slots.set(EvmWord(U256::from_be_bytes(deleted_key)), EvmWord(U256::from(4))).unwrap();
         let contract_state = slots.flush().unwrap();
         let source_state = source
             .put_cbor(
-                &EvmStateV18 {
+                &EvmState {
                     bytecode: old_code_cid,
-                    bytecode_hash: BytecodeHashV18(keccak256(old_code).0),
+                    bytecode_hash: BytecodeHash(keccak256(old_code).0),
                     contract_state,
-                    transient_data: None,
+                    transient_data: Some(TransientData {
+                        transient_data_state: contract_state,
+                        transient_data_lifespan: TransientDataLifespan { origin: 100, nonce: 7 },
+                    }),
                     nonce: 9,
-                    tombstone: None,
+                    tombstone: Some(Tombstone { origin: 101, nonce: 8 }),
                 },
                 Code::Blake2b256,
             )
@@ -478,16 +552,22 @@ mod tests {
         let applied = apply_evm_patch(
             source.as_ref(),
             Rc::clone(&output),
-            &EVM_ACTOR_CODE,
+            actor_code,
             &source_state,
             Some(&replacement_code),
             &storage,
         )
         .unwrap();
         let store = PatchStore { source: source.as_ref(), output };
-        let state = EvmStateV18::load(&store, &applied.state).unwrap();
+        let state = EvmState::load(&store, &applied.state).unwrap();
 
         assert_eq!(state.nonce, 9);
+        let transient = state.transient_data.as_ref().unwrap();
+        assert_eq!(transient.transient_data_state, contract_state);
+        assert_eq!(transient.transient_data_lifespan.origin, 100);
+        assert_eq!(transient.transient_data_lifespan.nonce, 7);
+        assert_eq!(state.tombstone.as_ref().unwrap().origin, 101);
+        assert_eq!(state.tombstone.as_ref().unwrap().nonce, 8);
         assert_eq!(state.bytecode_hash.0, keccak256(replacement_code).0);
         assert_eq!(store.get(&state.bytecode).unwrap(), Some(replacement_code.to_vec()));
         assert_eq!(
@@ -503,14 +583,14 @@ mod tests {
     fn rejects_reserved_bytecode_prefix() {
         let source = Rc::new(MemoryBlockstore::default());
         let bytecode = source.put(Code::Blake2b256, &Block::new(IPLD_RAW, [])).unwrap();
-        let slots = EvmStateKamtV18::new_with_config(Rc::clone(&source), EVM_STATE_KAMT_CONFIG_V18)
+        let slots = EvmStateKamt::new_with_config(Rc::clone(&source), EVM_STATE_KAMT_CONFIG)
             .flush()
             .unwrap();
         let state = source
             .put_cbor(
-                &EvmStateV18 {
+                &EvmState {
                     bytecode,
-                    bytecode_hash: BytecodeHashV18(keccak256([]).0),
+                    bytecode_hash: BytecodeHash(keccak256([]).0),
                     contract_state: slots,
                     transient_data: None,
                     nonce: 0,
@@ -522,7 +602,7 @@ mod tests {
         let error = apply_evm_patch(
             source.as_ref(),
             Rc::new(MemoryBlockstore::default()),
-            &EVM_ACTOR_CODE,
+            &EVM_ACTOR_CODES[0],
             &state,
             Some(&[0xef]),
             &BTreeMap::new(),

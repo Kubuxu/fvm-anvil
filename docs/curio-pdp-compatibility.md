@@ -48,7 +48,7 @@ followed by the restored head. Cancellation and reconnect are supported.
 | Native method | Positional parameters | Result |
 | --- | --- | --- |
 | `Filecoin.StateNetworkName` | `[]` | `local-fvm-anvil`. |
-| `Filecoin.StateNetworkVersion` | `[tipsetKey]` | Network version 28 after validating the selected tipset. |
+| `Filecoin.StateNetworkVersion` | `[tipsetKey]` | Configured network version after validating the selected tipset. |
 | `Filecoin.ChainHead` | `[]` | Canonical synthetic Lotus-decodable tipset. |
 | `Filecoin.ChainGetTipSet` | `[tipsetKey]` | Canonical local tipset selected by key. |
 | `Filecoin.ChainGetTipSetByHeight` | `[height, tipsetKey]` | Local history relative to the selected anchor. |

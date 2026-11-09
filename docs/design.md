@@ -44,9 +44,8 @@ not import consensus history or define remote RPC forking behavior.
 
 The checked-out sources currently provide:
 
-- `ref-fvm` 4.8.2.
-- Builtin actors 18.0.0.
-- Forest configuration for network version 28 with actor bundle v18.
+- `ref-fvm` 4.9.0.
+- Builtin actors 18.0.0 by default, or 19.0.1 with `--network-version 29`.
 
 Defaults:
 
@@ -72,8 +71,9 @@ configuration. Explicit `--number`, `--timestamp`, and `--base-fee` values confl
 
 An alternate `--actor-bundle <path>` is a genesis-time choice. Startup trusts the CAR's declared
 root, then loads its manifest and verifies the actor entries required for execution. The user is
-responsible for supplying a bundle compatible with the v18 EVM actor state schema assumed by the
-runtime.
+responsible for supplying a bundle compatible with the selected network version and the shared
+v18/v19 EVM state schema. Prepared archives must match both the selected network version and
+bundle manifest; importing state never relabels or migrates actors.
 
 ## Architecture
 
@@ -156,8 +156,9 @@ must not access a state root, pool, clock, blockstore, or worker.
 
 The binary owns configuration precedence, development-wallet keys, startup/shutdown, and the
 interval scheduler. Protocol types live in the lowest crate owning their invariants. The shared
-state crate owns persisted formats and versioned v18 adapters, never a live root; official Wasm
-and code CIDs come from the selected actor bundle, not production dependencies on actor crates.
+state crate owns persisted formats and the shared, source-verified v18/v19 adapters, never a live
+root; official Wasm and code CIDs come from the selected actor bundle, not production dependencies
+on actor crates.
 
 
 ### Reuse directly
@@ -321,7 +322,7 @@ The implemented Anvil controls are:
 
 Curio PDP's native Filecoin boundary is served at `/rpc/v1` over HTTP and WebSocket:
 
-- `Filecoin.StateNetworkName` (`local-fvm-anvil`) and `Filecoin.StateNetworkVersion`;
+- `Filecoin.StateNetworkName` (`local-fvm-anvil`) and `Filecoin.StateNetworkVersion` (configured version);
 - `Filecoin.ChainHead`, `Filecoin.ChainGetTipSet`, and `Filecoin.ChainGetTipSetByHeight`;
 - `Filecoin.StateGetRandomnessDigestFromBeacon`;
 - `Filecoin.ChainNotify` over Go `go-jsonrpc` WebSocket channels, with initial `current`,

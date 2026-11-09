@@ -3,6 +3,7 @@ use std::thread::{self, JoinHandle};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use cid::Cid;
+use fvm_shared::version::NetworkVersion;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::config::NodeConfig;
@@ -21,9 +22,14 @@ const WORKER_STACK_SIZE: usize = 64 * 1024 * 1024;
 #[derive(Clone)]
 pub struct NodeHandle {
     commands: mpsc::Sender<WorkerCommand>,
+    network_version: NetworkVersion,
 }
 
 impl NodeHandle {
+    pub const fn network_version(&self) -> NetworkVersion {
+        self.network_version
+    }
+
     /// Empty keys select the current head; nonempty keys must be canonical local keys.
     pub async fn native_tipset(&self, key: Vec<Cid>) -> Result<NativeTipset, NodeError> {
         self.request(|reply| WorkerCommand::NativeTipset { key, reply }).await
@@ -290,6 +296,7 @@ pub struct NodeService {
 impl NodeService {
     /// Starts the worker and waits until bundle import, genesis, and runtime validation complete.
     pub fn start(config: NodeConfig) -> Result<Self, NodeError> {
+        let network_version = config.network_version();
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (ready, readiness) = std_mpsc::sync_channel(1);
         let worker = thread::Builder::new()
@@ -299,7 +306,7 @@ impl NodeService {
             .map_err(NodeError::WorkerSpawn)?;
 
         let startup_info = readiness.recv().map_err(|_| NodeError::WorkerStartup)??;
-        Ok(Self { handle: NodeHandle { commands }, startup_info, _worker: worker })
+        Ok(Self { handle: NodeHandle { commands, network_version }, startup_info, _worker: worker })
     }
 
     pub fn handle(&self) -> NodeHandle {

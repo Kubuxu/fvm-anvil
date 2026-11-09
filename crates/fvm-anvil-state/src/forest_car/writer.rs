@@ -517,10 +517,13 @@ fn write_uvarint(writer: &mut impl Write, mut value: u64) -> io::Result<()> {
 }
 
 fn summary(cid: &Cid) -> u64 {
-    let folded =
-        cid.hash().digest().chunks_exact(8).fold(cid.codec() ^ cid.hash().code(), |hash, chunk| {
-            hash ^ u64::from_le_bytes(chunk.try_into().expect("exact chunks"))
-        });
+    let folded = cid
+        .hash()
+        .digest()
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .fold(cid.codec() ^ cid.hash().code(), |hash, chunk| hash ^ u64::from_le_bytes(*chunk));
     folded.saturating_sub(1)
 }
 

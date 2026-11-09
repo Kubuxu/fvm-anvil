@@ -8,6 +8,7 @@ use fvm::machine::Manifest;
 use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_car::load_car;
 use fvm_ipld_encoding::CborStore;
+use fvm_shared::version::NetworkVersion;
 
 use crate::config::ActorBundle;
 use crate::error::{BundleError, NodeError};
@@ -29,10 +30,11 @@ impl BundleArtifacts {
 
 pub(crate) fn load_bundle<BS: Blockstore>(
     selection: &ActorBundle,
+    network_version: NetworkVersion,
     cache_path: Option<&Path>,
     store: &BS,
 ) -> Result<BundleArtifacts, NodeError> {
-    let expected_root = selection.expected_root()?;
+    let expected_root = selection.expected_root(network_version)?;
     match selection {
         ActorBundle::Official => {
             if let Some(path) = cache_path
@@ -56,7 +58,9 @@ pub(crate) fn load_bundle<BS: Blockstore>(
                 }
             }
 
-            let url = selection.source_url()?.expect("the official actor bundle always has a URL");
+            let url = selection
+                .source_url(network_version)?
+                .expect("the official actor bundle always has a URL");
             tracing::info!(%url, "downloading actor bundle");
             let response = ureq::get(url.as_str()).call().map_err(|error| {
                 BundleError::Download { url: url.to_string(), detail: error.to_string() }
@@ -165,6 +169,7 @@ mod tests {
     use fvm_ipld_car::{CarHeader, CarWriter};
     use fvm_ipld_encoding::DAG_CBOR;
     use fvm_shared::IPLD_RAW;
+    use fvm_shared::version::NetworkVersion;
     use multihash_codetable::{Code, MultihashDigest};
 
     use super::{cache_bundle, load_bundle};
@@ -178,7 +183,8 @@ mod tests {
         let path = write_header("multiple", vec![first, second]);
         let selection = ActorBundle::local(&path).unwrap();
 
-        let result = load_bundle(&selection, None, &MemoryBlockstore::default());
+        let result =
+            load_bundle(&selection, NetworkVersion::V28, None, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
 
         assert!(matches!(result, Err(NodeError::Bundle(BundleError::RootCount(2)))));
@@ -190,7 +196,8 @@ mod tests {
         let path = write_header("unlisted-root", vec![root]);
         let selection = ActorBundle::local(&path).unwrap();
 
-        let result = load_bundle(&selection, None, &MemoryBlockstore::default());
+        let result =
+            load_bundle(&selection, NetworkVersion::V28, None, &MemoryBlockstore::default());
         fs::remove_file(path).unwrap();
 
         assert!(matches!(

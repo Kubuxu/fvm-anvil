@@ -28,10 +28,10 @@ Supply an existing source ForestCAR and recipe; the filenames above are placehol
 and `--verify` for the additional audit described [below](#validation-and-runtime-loading).
 Progress goes to stderr; the final build summary goes to stdout.
 
-NV29 extraction preserves the source actor codes, manifest, and selected state DAGs without executing
-them. The System and Init wire layouts remain compatible with the offline reconstruction. This does
-not add NV29 execution support: the current node still requires NV28/v18 and rejects an NV29 archive.
-Use the actual source network version rather than relabeling a newer snapshot to make it load.
+Extraction preserves the source actor codes, manifest, and selected state DAGs without executing
+them. The node's `--network-version` and actor bundle must match the archive; see the
+[supported runtime versions](design.md#versions-and-default-environment).
+Never relabel an archive or replace its actor codes to make it load.
 
 Start the foreground node in **terminal A**:
 
@@ -116,7 +116,8 @@ is a JSON `u64`. Explicit `null` fields are rejected. Multiple entries resolving
 are rejected rather than merged.
 
 Addresses are required. A build fails clearly if a requested address does not exist or an
-EVM-specific patch targets a non-v18-EVM actor. Output metadata records final actor records, source
+EVM-specific patch targets an unsupported actor code (official mainnet v18/v19 are supported).
+Output metadata records final actor records, source
 and prepared state CIDs, source and replacement code details, storage changes, requested addresses,
 the source execution context, and manifest data.
 
@@ -172,7 +173,7 @@ copy of that actor remains large.
 
 ## State modifications
 
-The patch surface supports existing builtin-actors v18 EVM actors:
+The patch surface supports existing builtin-actors v18/v19 EVM actors with a shared wire layout:
 
 - replace deployed/runtime bytecode;
 - set or delete storage slots;
@@ -180,7 +181,7 @@ The patch surface supports existing builtin-actors v18 EVM actors:
 
 Bytecode replacement enforces the actor's 24 KiB limit and reserved `0xef` prefix rule, writes a raw
 IPLD bytecode block, and records its Keccak-256 hash while preserving the contract storage root, EVM
-nonce, transient data, and tombstone. Storage patches use the v18 minimal-big-endian word encoding
+nonce, transient data, and tombstone. Storage patches use the shared v18/v19 minimal-big-endian word encoding
 and KAMT configuration, delete zero values, apply all requested slots, and flush once. Actor balance
 and sequence changes update the outer `ActorState`.
 
@@ -198,7 +199,7 @@ disabled by default: the export traversal has already read and copied the comple
 
 Actor-bundle compatibility is not a Press build gate. Missing source code blocks and the System
 manifest data remain explicit external bundle dependencies; `fvm-anvil` loads its configured bundle
-and validates the prepared NV28/v18 execution context when constructing the ref-FVM machine.
+and validates that the prepared network version and actor manifest match that selection.
 
 Node startup uses the same bounded structural validation as a default build, rather than reading
 an imported actor's full storage. An archive missing an unpatched actor-state block therefore fails

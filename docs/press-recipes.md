@@ -224,5 +224,8 @@ results are recorded separately in
 It excludes legacy rollout artifacts, unrelated PDP listeners, wallet/control contracts, and the
 USDFC minting/collateral system.
 
-Preserve the source network version when building. Press can extract NV29 state, but the current
-NV28/v18 node cannot execute it; historical RPC checks do not prove an imported archive's runtime.
+Preserve the source network version when building and select the matching runtime configuration.
+Historical RPC checks alone do not prove an imported archive's runtime. Use the
+[mainnet Curio preparation workflow](../tests/curio/README.md#prepare-an-imported-mainnet-state-run)
+for archive startup, local owner control, StorageTerms migration, synthetic USDFC funding,
+and real payment deposits.

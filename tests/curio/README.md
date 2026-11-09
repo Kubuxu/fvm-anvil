@@ -202,6 +202,140 @@ exceeds Curio's 32 MiB padded cache threshold. Read-only Skiff mode is not a pro
 
 Private signing keys remain in this dedicated local database. The profile is local-only.
 
+## Prepare an imported mainnet-state run
+
+Use this path instead of fresh deployment when testing an upgrade against existing FWSS
+storage. Do not run `deploy_fwss.py` against the imported node: that creates a different
+stack and does not exercise the mainnet proxies or migration.
+
+### Runtime prerequisite
+
+Select the archive's recorded network version when starting the node. Startup rejects a
+network-version or bundle-manifest mismatch; do not relabel the state or replace its actor codes.
+
+Inspect the final `.press.car.zst` file's source epoch, network version, actor inventory,
+patches, and roots. Temporary Press build files are not archives:
+
+```sh
+export ARCHIVE=snapshots/fwss-mainnet-v1.5.0-height-6530880.press.car.zst
+target/release/press inspect "$ARCHIVE"
+```
+
+The expected graph and omissions are recorded in
+[`recipes/fwss-mainnet-v1.5.0.evidence.json`](../../recipes/fwss-mainnet-v1.5.0.evidence.json).
+The live imported graph, not deployment labels, is authoritative. It must include FWSS's
+dispatcher/delegates, PDP, registry, FilecoinPay, session keys, and USDFC proxy/implementation.
+The omitted Safe owner does not need importing: local preparation explicitly patches only
+FWSS's ownership word to our development signer and records that mutation.
+
+### Upgrade the existing modular proxy
+
+Start a **dedicated loopback node**, with chain ID 314 and one-second interval mining.
+An imported archive supplies its own epoch/timestamp/base fee; do not add `--timestamp`.
+Use new output directories and a separate Docker Compose project to preserve earlier runs.
+
+```sh
+export WORK="$(mktemp -d "${TMPDIR:-/tmp}/curio-mainnet.XXXXXX")"
+target/release/fvm-anvil --state "$ARCHIVE" --network-version 29 --chain-id 314 \
+  --port 18548 --block-time 1 --config-out "$WORK/node.json"
+```
+
+In another terminal, set `WORK` to that directory and select the reviewed candidate source.
+The StorageTerms rehearsal target is PR #653, commit
+`371e8b0a48ccf622288e0af0f02a4468d5c6a7be`, not a moving `main`. Keep the source checkout
+read-only; the helper exports committed files and recursively pinned submodules into its build.
+
+```sh
+export PATH="$HOME/bin:$PATH"
+export RPC_URL=http://127.0.0.1:18548/rpc/v1
+export PRIVATE_KEY="$(jq -r '.private_keys[0]' "$WORK/node.json")"
+export FWSS_CHECKOUT="$WORK/filecoin-services"
+git clone --no-checkout https://github.com/FilOzone/filecoin-services.git "$FWSS_CHECKOUT"
+git -C "$FWSS_CHECKOUT" checkout --detach 371e8b0a48ccf622288e0af0f02a4468d5c6a7be
+git -C "$FWSS_CHECKOUT" submodule update --init --recursive
+export FWSS_SOURCE="$FWSS_CHECKOUT/service_contracts"
+export DEPLOYMENT="$WORK/upgraded.json"
+
+python3 tests/curio/upgrade_fwss.py --rpc-url "$RPC_URL" \
+  --source "$FWSS_SOURCE" --output "$DEPLOYMENT"
+```
+
+The separate checkout preserves the source selected for the fresh-deployment recipe.
+Untracked and ignored files are excluded from the build; every recursive submodule checkout
+must match its pinned revision. No source checkout is modified by the helper.
+The helper preserves dependency addresses, proxy, dispatcher, and imported proving parameters;
+it deploys candidate facets and a route migration, wraps that migration in
+`FWSSStorageTermsMigration`, then executes the real announce/wait/migrate path.
+Do not execute the raw route migration: it does not initialize the legacy terms record.
+The manifest records the local ownership patch, roots, upgrade transactions, and post-upgrade
+checks. A fresh-state rehearsal is identified separately from an imported-state run.
+
+### Fund local keys with the imported payment token
+
+Keep the imported USDFC implementation and storage layout. Do not deploy a substitute token
+or patch FilecoinPay account balances. The acceptance helper can assign a synthetic ERC-20
+wallet balance with `anvil_setERC20Balance`, then use real approval and deposit transactions.
+This is local test funding, not collateral-backed minting; it does not establish token supply
+or collateral invariants. Funding must fail if the token's balance layout is unsupported.
+
+First run the legacy creation format against the upgraded proxy:
+
+```sh
+export COMPOSE_PROJECT_NAME="fvm-anvil-curio-legacy-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+python3 tests/curio/run.py --manifest "$DEPLOYMENT" --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY" --fund-token-balance 100000000000000000000 \
+  --skiff .curio-build/bin/skiff --pdptool .curio-build/bin/pdptool \
+  --client .curio-build/bin/client --work-dir "$WORK/legacy" --timeout 7200
+```
+
+`--fund-token-balance` is an absolute wallet balance in smallest token units, not an
+increment. The example assigns 100 USDFC; the default real deposit is 10 tokens.
+Funding mutations are restricted to a loopback fvm-anvil endpoint.
+All native FIL fees and provider registration burns still need a funded development account.
+
+For explicit StorageTerms, register a definition through the locally controlled FWSS proxy,
+then pass its ID. For example, use the same imported USDFC at 5 tokens/TiB/month:
+
+```sh
+export FWSS="$(jq -r '.contracts.fwss' "$DEPLOYMENT")"
+export TOKEN="$(jq -r '.contracts.token' "$DEPLOYMENT")"
+export SALT=0x0000000000000000000000000000000000000000000000000000000000000001
+export TERMS="($TOKEN,18,$SALT,5000000000000000000)"
+cast send "$FWSS" 'registerStorageTerms((address,uint8,bytes32,uint96))' "$TERMS" \
+  --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --gas-limit 10000000000
+export TERMS_ID="$(cast call "$FWSS" \
+  'getStorageTermsId((address,uint8,bytes32,uint96))(bytes32)' "$TERMS" \
+  --rpc-url "$RPC_URL")"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" -f tests/curio/compose.yaml stop
+export COMPOSE_PROJECT_NAME="fvm-anvil-curio-terms-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+python3 tests/curio/run.py --manifest "$DEPLOYMENT" --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY" --storage-terms-id "$TERMS_ID" \
+  --fund-token-balance 100000000000000000000 \
+  --skiff .curio-build/bin/skiff --pdptool .curio-build/bin/pdptool \
+  --client .curio-build/bin/client --work-dir "$WORK/terms" --timeout 7200
+```
+
+Keep the same node alive between these runs. Each invocation above selects a unique Compose
+project and fresh database volumes, even when reusing `$WORK`. Stop the previous project before
+starting another attempt or switching projects: the database host ports are shared. Preserve its
+`COMPOSE_PROJECT_NAME` long enough to run the `docker compose -p ... stop` command above.
+Imported finality/proving periods are not shortened; allow the larger stage timeout.
+The acceptance gate still requires real ingestion, a successful proof receipt, CQL proof
+cache, indexing isolation, and Go-client checks. It additionally verifies the selected
+terms and actual payment-rail token/rate. Curio's acceptance of a signed terms payload is
+not evidence that it enforces a provider token/price policy.
+
+This path does not upgrade PDP, registry, payments, session keys, or token contracts. It does
+not exercise omitted token minting/collateral contracts, Safe signing, or other PDP listeners.
+The 2026-11-09 preparation run loaded this archive with FVM 4.9.0 and actors v19.0.1,
+executed the wrapped migration with 19 successful receipts, preserved sampled views of 13
+existing datasets and the proving configuration, assigned synthetic USDFC, and deposited
+10 USDFC through the real token and FilecoinPay contracts. Full Curio ingestion/proving on
+the imported state has not been run. The separate fresh-state preparation rehearsal used the
+previous NV28/v18 runtime and passed migration, explicit terms, synthetic funding, real deposit,
+ingestion, and proving; it does not establish coverage of the imported-state runtime.
+
 ## Use the native RPC capability directly
 
 The same `/rpc/v1` endpoint accepts Ethereum and supported `Filecoin.*` methods:

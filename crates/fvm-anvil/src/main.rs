@@ -19,10 +19,9 @@ use alloy_signer_local::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, ValueEnum};
 use fvm_anvil_node::{
-    ACTOR_BUNDLE_VERSION, ActorBundle, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_BASE_FEE_PER_GAS,
-    DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_CHAIN_ID, DEFAULT_GENESIS_BLOCK_NUMBER,
-    DEFAULT_GENESIS_TIMESTAMP, DEFAULT_PREFUNDED_BALANCE_FIL, GenesisAccount, NETWORK_VERSION,
-    NodeConfig, NodeHandle, NodeService,
+    ActorBundle, DEFAULT_BASE_FEE_PER_GAS, DEFAULT_BLOCK_GAS_LIMIT, DEFAULT_CHAIN_ID,
+    DEFAULT_GENESIS_BLOCK_NUMBER, DEFAULT_GENESIS_TIMESTAMP, DEFAULT_PREFUNDED_BALANCE_FIL,
+    GenesisAccount, NodeConfig, NodeHandle, NodeService,
 };
 use fvm_anvil_rpc::{RpcService, ServerConfig, rpc_router};
 use rand_08::{SeedableRng, rngs::StdRng};
@@ -109,6 +108,10 @@ struct Cli {
     )]
     chain_id: u64,
 
+    /// Filecoin network version: 28 (actors v18) or 29 (actors v19).
+    #[arg(long, default_value_t = 28, value_parser = parse_network_version)]
+    network_version: u32,
+
     /// Timestamp of the synthetic genesis block.
     #[arg(long, default_value_t = DEFAULT_GENESIS_TIMESTAMP, conflicts_with = "state")]
     timestamp: u64,
@@ -153,7 +156,7 @@ struct Cli {
     #[arg(long, requires = "block_time", conflicts_with = "no_mining")]
     mixed_mining: bool,
 
-    /// Local v18 builtin-actors CAR to use instead of the pinned official bundle.
+    /// Local builtin-actors CAR to use instead of the pinned network-specific official bundle.
     #[arg(long, value_name = "PATH")]
     actor_bundle: Option<PathBuf>,
 
@@ -224,8 +227,6 @@ impl TryFrom<Cli> for AppConfig {
     type Error = anyhow::Error;
 
     fn try_from(cli: Cli) -> Result<Self> {
-        let actor_bundle_cache =
-            if cli.actor_bundle.is_none() { default_actor_bundle_cache_path() } else { None };
         let actor_bundle = match &cli.actor_bundle {
             Some(path) => ActorBundle::local(path).context("invalid local actor bundle")?,
             None => ActorBundle::Official,
@@ -256,6 +257,11 @@ impl TryFrom<Cli> for AppConfig {
         };
         let node = NodeConfig::new(cli.chain_id, actor_bundle)
             .context("invalid node configuration")?
+            .with_network_version(cli.network_version.into())
+            .context("invalid network version")?;
+        let actor_bundle_cache =
+            if cli.actor_bundle.is_none() { default_actor_bundle_cache_path(&node) } else { None };
+        let node = node
             .with_actor_bundle_cache(actor_bundle_cache)
             .with_prepared_state(cli.state)
             .context("invalid prepared-state configuration")?
@@ -358,6 +364,14 @@ fn parse_chain_id(value: &str) -> Result<u64, String> {
     Ok(chain_id)
 }
 
+fn parse_network_version(value: &str) -> Result<u32, String> {
+    let version = value.parse::<u32>().map_err(|error| error.to_string())?;
+    match version {
+        28 | 29 => Ok(version),
+        _ => Err("network version must be 28 (actors v18) or 29 (actors v19)".to_owned()),
+    }
+}
+
 fn parse_nonzero_u64(value: &str) -> Result<u64, String> {
     let parsed = value.parse::<u64>().map_err(|error| error.to_string())?;
     if parsed == 0 {
@@ -365,7 +379,7 @@ fn parse_nonzero_u64(value: &str) -> Result<u64, String> {
     }
     Ok(parsed)
 }
-fn default_actor_bundle_cache_path() -> Option<PathBuf> {
+fn default_actor_bundle_cache_path(config: &NodeConfig) -> Option<PathBuf> {
     let cache_home = env::var_os("XDG_CACHE_HOME")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -374,11 +388,11 @@ fn default_actor_bundle_cache_path() -> Option<PathBuf> {
                 .filter(|path| !path.is_empty())
                 .map(|path| PathBuf::from(path).join(".cache"))
         })?;
-    Some(
-        cache_home.join("fvm-anvil").join(format!(
-            "builtin-actors-v{ACTOR_BUNDLE_VERSION}-{DEFAULT_ACTOR_BUNDLE_ROOT}.car"
-        )),
-    )
+    Some(cache_home.join("fvm-anvil").join(format!(
+        "builtin-actors-v{}-{}.car",
+        config.actor_bundle_version(),
+        config.official_actor_bundle_root()
+    )))
 }
 
 fn initialize_tracing(quiet: bool, color: ColorChoice, verbosity: u8) {
@@ -443,6 +457,8 @@ async fn run(config: AppConfig) -> Result<()> {
     } = config;
     let chain_id = node.chain_id();
     let block_gas_limit = node.block_gas_limit();
+    let network_version = u32::from(node.network_version());
+    let actor_bundle_version = node.actor_bundle_version();
 
     // NodeService::start does not return until state initialization and the worker are ready.
     // Binding only after that point ensures invalid genesis or prepared state never exposes RPC.
@@ -467,6 +483,8 @@ async fn run(config: AppConfig) -> Result<()> {
         genesis_accounts: &genesis_accounts,
         wallet: &wallet,
         chain_id,
+        network_version,
+        actor_bundle_version,
         genesis_number,
         genesis_timestamp,
         block_gas_limit,
@@ -530,6 +548,8 @@ struct StartupOutput<'a> {
     genesis_accounts: &'a [GenesisAccount],
     wallet: &'a DevelopmentWallet,
     chain_id: u64,
+    network_version: u32,
+    actor_bundle_version: u32,
     genesis_number: u64,
     genesis_timestamp: u64,
     block_gas_limit: u64,
@@ -569,8 +589,8 @@ fn render_banner(mut writer: impl io::Write, output: &StartupOutput<'_>) -> io::
     writeln!(writer, "Chain")?;
     writeln!(writer, "==================")?;
     writeln!(writer, "Chain ID: {}", output.chain_id)?;
-    writeln!(writer, "Network version: {NETWORK_VERSION}")?;
-    writeln!(writer, "Actor bundle version: {ACTOR_BUNDLE_VERSION}")?;
+    writeln!(writer, "Network version: {}", output.network_version)?;
+    writeln!(writer, "Actor bundle version: {}", output.actor_bundle_version)?;
     writeln!(writer, "Actor bundle root: {}", output.actor_bundle_root)?;
     match &output.prepared_state_root {
         Some(root) => writeln!(writer, "Prepared state root: {root}")?,
@@ -647,8 +667,8 @@ fn write_config_file(path: &Path, output: &StartupOutput<'_>) -> Result<()> {
         genesis_number: output.genesis_number.to_string(),
         rpc_url: output.rpc_url,
         filecoin: FilecoinFile {
-            network_version: NETWORK_VERSION.into(),
-            actor_bundle_version: ACTOR_BUNDLE_VERSION,
+            network_version: output.network_version,
+            actor_bundle_version: output.actor_bundle_version,
             actor_bundle_root: &output.actor_bundle_root,
             prepared_state_root: output.prepared_state_root.as_deref(),
             current_state_root: &output.current_state_root,
@@ -702,6 +722,8 @@ mod tests {
 
         assert_eq!(config.listen_addr, SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)));
         assert_eq!(config.node.chain_id(), DEFAULT_CHAIN_ID);
+        assert_eq!(u32::from(config.node.network_version()), 28);
+        assert_eq!(config.node.actor_bundle_version(), 18);
         assert_eq!(config.node.actor_bundle(), &ActorBundle::Official);
         assert_eq!(config.node.genesis_accounts().len(), DEFAULT_ACCOUNTS as usize);
         assert_eq!(
@@ -818,6 +840,8 @@ mod tests {
             vec!["fvm-anvil", "--host", "localhost"],
             vec!["fvm-anvil", "--port", "0"],
             vec!["fvm-anvil", "--chain-id", "0"],
+            vec!["fvm-anvil", "--network-version", "27"],
+            vec!["fvm-anvil", "--network-version", "30"],
             vec!["fvm-anvil", "--gas-limit", "0"],
             vec!["fvm-anvil", "--block-time", "0"],
             vec!["fvm-anvil", "--mixed-mining"],
@@ -835,7 +859,8 @@ mod tests {
 
     #[test]
     fn config_out_contains_compatible_and_filecoin_fields() {
-        let cli = Cli::try_parse_from(["fvm-anvil", "--accounts", "1"]).unwrap();
+        let cli = Cli::try_parse_from(["fvm-anvil", "--accounts", "1", "--network-version", "29"])
+            .unwrap();
         let config = AppConfig::try_from(cli).unwrap();
         let accounts =
             config.genesis_accounts.iter().map(GenesisAccount::ethereum).collect::<Vec<_>>();
@@ -844,6 +869,8 @@ mod tests {
             genesis_accounts: &config.genesis_accounts,
             wallet: &config.wallet,
             chain_id: config.node.chain_id(),
+            network_version: u32::from(config.node.network_version()),
+            actor_bundle_version: config.node.actor_bundle_version(),
             genesis_number: config.node.genesis_block_number(),
             genesis_timestamp: config.node.genesis_timestamp(),
             block_gas_limit: config.node.block_gas_limit(),
@@ -864,9 +891,15 @@ mod tests {
         assert_eq!(value["private_keys"].as_array().unwrap().len(), 1);
         assert_eq!(value["chain_id"], DEFAULT_CHAIN_ID);
         assert_eq!(value["base_fee"], DEFAULT_BASE_FEE_PER_GAS.to_string());
-        assert_eq!(value["filecoin"]["network_version"], 28);
+        assert_eq!(value["filecoin"]["network_version"], 29);
+        assert_eq!(value["filecoin"]["actor_bundle_version"], 19);
         assert_eq!(value["filecoin"]["actor_bundle_root"], "bafy-test");
         assert_eq!(value["filecoin"]["prepared_state_root"], "bafy-prepared");
         assert_eq!(value["filecoin"]["current_state_root"], "bafy-current");
+        let mut banner = Vec::new();
+        render_banner(&mut banner, &output).unwrap();
+        let banner = String::from_utf8(banner).unwrap();
+        assert!(banner.contains("Network version: 29"));
+        assert!(banner.contains("Actor bundle version: 19"));
     }
 }

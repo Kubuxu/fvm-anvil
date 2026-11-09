@@ -17,7 +17,7 @@ use fvm_anvil_eth::{
     project_event,
 };
 use fvm_anvil_state::{
-    ForestCar, evm::EvmStateV18, prepared::PreparedStateMetadata, verify::validate_prepared_archive,
+    ForestCar, evm::EvmState, prepared::PreparedStateMetadata, verify::validate_prepared_archive,
 };
 use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding::CborStore;
@@ -191,8 +191,12 @@ impl NodeRuntime {
             None => RuntimeBlockstore::empty(),
         });
         let bundle_started = Instant::now();
-        let bundle =
-            load_bundle(config.actor_bundle(), config.actor_bundle_cache(), store.as_ref())?;
+        let bundle = load_bundle(
+            config.actor_bundle(),
+            config.network_version(),
+            config.actor_bundle_cache(),
+            store.as_ref(),
+        )?;
         tracing::debug!(elapsed = ?bundle_started.elapsed(), "loaded actor bundle");
 
         let state_started = Instant::now();
@@ -519,7 +523,7 @@ impl NodeRuntime {
             return Ok(0);
         };
         if actor.code == self.bundle.code("evm")? {
-            Ok(self.evm_state_v18(address, &actor)?.nonce())
+            Ok(self.evm_state(address, &actor)?.nonce())
         } else {
             Ok(actor.sequence)
         }
@@ -537,7 +541,7 @@ impl NodeRuntime {
         if actor.code != self.bundle.code("evm")? {
             return Ok(Bytes::new());
         }
-        let state = self.evm_state_v18(address, &actor)?;
+        let state = self.evm_state(address, &actor)?;
         let bytecode = self
             .store
             .get(&state.bytecode())
@@ -561,7 +565,7 @@ impl NodeRuntime {
         if actor.code != self.bundle.code("evm")? {
             return Ok(B256::ZERO);
         }
-        let state = self.evm_state_v18(address, &actor)?;
+        let state = self.evm_state(address, &actor)?;
         let value = state.storage(self.store.as_ref(), slot.to_be_bytes()).map_err(|error| {
             NodeError::MalformedEvmStorage {
                 address,
@@ -598,7 +602,7 @@ impl NodeRuntime {
         let mut tree = self.current_state_tree()?;
         let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
         if actor.code == self.bundle.code("evm")? {
-            let mut state = self.evm_state_v18(address, &actor)?;
+            let mut state = self.evm_state(address, &actor)?;
             state.set_nonce(nonce);
             actor.state = state.flush(self.store.as_ref(), &actor.state).map_err(|error| {
                 NodeError::MalformedEvmState {
@@ -619,7 +623,7 @@ impl NodeRuntime {
         let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
         let evm_code = self.bundle.code("evm")?;
         let mut state = if actor.code == evm_code {
-            let mut state = self.evm_state_v18(address, &actor)?;
+            let mut state = self.evm_state(address, &actor)?;
             state.replace_bytecode(self.store.as_ref(), code.as_ref()).map_err(|error| {
                 NodeError::MalformedEvmState {
                     address,
@@ -629,7 +633,7 @@ impl NodeRuntime {
             })?;
             state
         } else {
-            EvmStateV18::create(self.store.as_ref(), code.as_ref(), actor.sequence).map_err(
+            EvmState::create(self.store.as_ref(), code.as_ref(), actor.sequence).map_err(
                 |error| NodeError::MalformedEvmState {
                     address,
                     state: Box::new(actor.state),
@@ -660,9 +664,9 @@ impl NodeRuntime {
         let (actor_id, mut actor) = self.actor_for_state_mutation(&mut tree, address)?;
         let evm_code = self.bundle.code("evm")?;
         let mut state = if actor.code == evm_code {
-            self.evm_state_v18(address, &actor)?
+            self.evm_state(address, &actor)?
         } else {
-            EvmStateV18::create(self.store.as_ref(), &[], actor.sequence).map_err(|error| {
+            EvmState::create(self.store.as_ref(), &[], actor.sequence).map_err(|error| {
                 NodeError::MalformedEvmState {
                     address,
                     state: Box::new(actor.state),
@@ -955,7 +959,7 @@ impl NodeRuntime {
     fn next_pool_nonce(&self, address: EthAddress) -> Result<u64, NodeError> {
         let committed = match self.actor_at(self.current_root, address)? {
             Some(actor) if actor.code == self.bundle.code("evm")? => {
-                self.evm_state_v18(address, &actor)?.nonce()
+                self.evm_state(address, &actor)?.nonce()
             }
             Some(actor) => actor.sequence,
             None => 0,
@@ -1391,12 +1395,8 @@ impl NodeRuntime {
         }
     }
 
-    fn evm_state_v18(
-        &self,
-        address: EthAddress,
-        actor: &ActorState,
-    ) -> Result<EvmStateV18, NodeError> {
-        EvmStateV18::load(self.store.as_ref(), &actor.state).map_err(|error| {
+    fn evm_state(&self, address: EthAddress, actor: &ActorState) -> Result<EvmState, NodeError> {
+        EvmState::load(self.store.as_ref(), &actor.state).map_err(|error| {
             NodeError::MalformedEvmState {
                 address,
                 state: Box::new(actor.state),
@@ -1429,7 +1429,7 @@ impl NodeRuntime {
         if actor.code != self.bundle.code("evm")? {
             return Err(NodeError::Erc20TokenNotEvm { token });
         }
-        let mut state = self.evm_state_v18(token, &actor)?;
+        let mut state = self.evm_state(token, &actor)?;
         state.replace_storage_slot(self.store.as_ref(), slot.0, value.0).map_err(|error| {
             NodeError::MalformedEvmStorage {
                 address: token,
@@ -1521,7 +1521,7 @@ impl NodeRuntime {
             .map_err(|error| NodeError::InvalidDelegatedAddress(error.to_string()))?;
         let placeholder_state = self
             .store
-            // builtin-actors v18 placeholder state, matching the attributed genesis layout.
+            // Placeholder actors have no actor-defined state schema in builtin-actors v18/v19.
             .put_cbor(&[0_u8; 32], Code::Blake2b256)
             .map_err(|error| NodeError::Execution(error.to_string()))?;
         let gas_funds = call.max_fee_per_gas.saturating_mul(U256::from(call.gas_limit));

@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("chain ID {0} is invalid; chain ID zero is reserved by ref-FVM")]
     InvalidChainId(u64),
+    #[error("network version {0} is unsupported; select 28 (actors v18) or 29 (actors v19)")]
+    UnsupportedNetworkVersion(u32),
     #[error("genesis block number {0} leaves no room for the next FVM epoch")]
     InvalidGenesisBlockNumber(u64),
     #[error("genesis timestamp {0} leaves no room for the next block timestamp")]
@@ -41,7 +43,7 @@ pub enum BundleError {
     MissingManifestInformation(Box<Cid>),
     #[error("failed to decode manifest information at {root}: {detail}")]
     InvalidManifestInformation { root: Box<Cid>, detail: String },
-    #[error("unsupported builtin manifest format {0}; expected format 1 for actor bundle v18")]
+    #[error("unsupported builtin manifest format {0}; expected format 1")]
     UnsupportedManifestFormat(u32),
     #[error("failed to load builtin actor manifest: {0}")]
     Manifest(String),

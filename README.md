@@ -25,7 +25,10 @@ target/release/fvm-anvil
 
 The default RPC endpoint is `http://127.0.0.1:8545`, with chain ID `31337`. Ten deterministic development accounts are funded with 10,000 FIL each. The account keys and mnemonic are development credentials and must not be used on a public network.
 
-On first startup, the node downloads and verifies the pinned builtin-actors v18 bundle. A compatible local CAR can be selected with `--actor-bundle`.
+On first startup, the node downloads and verifies the pinned builtin-actors bundle.
+Use `--network-version` to select a [supported network/actor pair](docs/design.md#versions-and-default-environment),
+or `--actor-bundle` for a compatible local CAR. Imported state must match the selected
+network version and bundle manifest.
 
 ```bash
 cast chain-id --rpc-url http://127.0.0.1:8545

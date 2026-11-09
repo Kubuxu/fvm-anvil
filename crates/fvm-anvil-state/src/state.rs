@@ -33,15 +33,15 @@ const EAM_NAMESPACE: u64 = 10;
 const MANDATORY_ACTOR_IDS: [u64; 5] =
     [SYSTEM_ACTOR_ID, INIT_ACTOR_ID, REWARD_ACTOR_ID, EAM_ACTOR_ID, BURNT_FUNDS_ACTOR_ID];
 
-// Wire layouts adapted from builtin-actors v18 System and Init state definitions
-// (Protocol Labs, MIT OR Apache-2.0).
+// Wire layouts shared by builtin-actors v18.0.0 and v19.0.0 System and Init state definitions
+// (Protocol Labs / ChainSafe Systems, MIT OR Apache-2.0), actors/{system,init}/src upstream.
 #[derive(Deserialize_tuple)]
-struct SystemStateV18 {
+struct SystemState {
     builtin_actors: Cid,
 }
 
 #[derive(Deserialize_tuple, Serialize_tuple)]
-struct InitStateV18 {
+struct InitState {
     address_map: Cid,
     next_id: u64,
     network_name: String,
@@ -185,7 +185,7 @@ pub fn construct_standalone_state<BS: Blockstore>(
 
     let system = actors.get(&SYSTEM_ACTOR_ID).expect("mandatory System actor was inserted");
     let system_state = source
-        .get_cbor::<SystemStateV18>(&system.state)
+        .get_cbor::<SystemState>(&system.state)
         .map_err(|error| StateConstructionError::ActorState {
             id: SYSTEM_ACTOR_ID,
             state: Box::new(system.state),
@@ -199,7 +199,7 @@ pub fn construct_standalone_state<BS: Blockstore>(
 
     let source_init_actor = actors.get(&INIT_ACTOR_ID).expect("mandatory Init actor was inserted");
     let source_init = source
-        .get_cbor::<InitStateV18>(&source_init_actor.state)
+        .get_cbor::<InitState>(&source_init_actor.state)
         .map_err(|error| StateConstructionError::ActorState {
             id: INIT_ACTOR_ID,
             state: Box::new(source_init_actor.state),
@@ -231,7 +231,7 @@ pub fn construct_standalone_state<BS: Blockstore>(
         .map_err(|error| StateConstructionError::InitMap(error.to_string()))?;
     let address_map =
         output_map.flush().map_err(|error| StateConstructionError::InitMap(error.to_string()))?;
-    let new_init_state = InitStateV18 {
+    let new_init_state = InitState {
         address_map,
         next_id: source_init.next_id,
         network_name: source_init.network_name,

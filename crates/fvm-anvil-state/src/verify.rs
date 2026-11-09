@@ -22,7 +22,7 @@ use crate::traversal::traverse_blockstore;
 const TEST_ACTOR_ID: u64 = 98;
 
 #[derive(Deserialize_tuple)]
-struct SystemStateV18 {
+struct SystemState {
     builtin_actors: Cid,
 }
 
@@ -182,7 +182,7 @@ fn verify_prepared_archive_inner(
         .map_err(|error| VerificationError::StateTree(error.to_string()))?
         .ok_or(VerificationError::MissingActor(0))?;
     let system_state = store
-        .get_cbor::<SystemStateV18>(&system_actor.state)
+        .get_cbor::<SystemState>(&system_actor.state)
         .map_err(|error| VerificationError::StateTree(error.to_string()))?
         .ok_or_else(|| VerificationError::IncompleteDag(system_actor.state.to_string()))?;
     if system_state.builtin_actors != metadata.actor_manifest_data {
@@ -272,7 +272,7 @@ fn verify_actor_patch(
     if !is_evm_actor_code(&actor.code) {
         return Err(VerificationError::InvalidPatch {
             id: actor_id,
-            message: format!("actor code {} is not builtin-actors v18 EVM code", actor.code),
+            message: format!("actor code {} is not builtin-actors v18/v19 EVM code", actor.code),
         });
     }
     let state = inspect_evm_state(store, &actor.state).map_err(|error| {

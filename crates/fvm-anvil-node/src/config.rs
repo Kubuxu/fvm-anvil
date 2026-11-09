@@ -9,11 +9,18 @@ use url::Url;
 use crate::error::ConfigError;
 
 pub const DEFAULT_CHAIN_ID: u64 = 31_337;
+/// Default network version; running nodes use `NodeConfig::network_version`.
 pub const NETWORK_VERSION: NetworkVersion = NetworkVersion::V28;
+/// Actor version of the default NV28 bundle.
 pub const ACTOR_BUNDLE_VERSION: u32 = 18;
 pub const DEFAULT_ACTOR_BUNDLE_ROOT: &str =
     "bafy2bzacedxsqapxwj5znwy4leem5gsuenhhfyqcntews3yis5iek67thy6lc";
 pub const DEFAULT_ACTOR_BUNDLE_URL: &str = "https://github.com/filecoin-project/builtin-actors/releases/download/v18.0.0/builtin-actors-mainnet.car";
+// v19.0.1 mainnet release CAR, SHA-256:
+// 5fe028fb85142443a098635030ececc4961f5f2ba7cdccf2bb9f27c80f764193.
+const ACTOR_BUNDLE_V19_ROOT: &str =
+    "bafy2bzaceaq4m3amtcy35lbok2cwcdn7auyypkakqegw6oodf6imx2r5opyiu";
+const ACTOR_BUNDLE_V19_URL: &str = "https://github.com/filecoin-project/builtin-actors/releases/download/v19.0.1/builtin-actors-mainnet.car";
 pub const DEFAULT_GENESIS_BLOCK_NUMBER: u64 = 0;
 pub const DEFAULT_GENESIS_TIMESTAMP: u64 = 0;
 pub const DEFAULT_BLOCK_GAS_LIMIT: u64 = 10_000_000_000;
@@ -22,12 +29,12 @@ pub const DEFAULT_PREFUNDED_BALANCE_FIL: u64 = 10_000;
 pub const DEFAULT_PREFUNDED_ETH_ADDRESS: EthAddress =
     address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-/// Selects the builtin-actors v18 CAR used to create genesis.
+/// Selects the builtin-actors CAR for the configured network version.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActorBundle {
-    /// Downloads the pinned official mainnet v18 CAR and verifies its root.
+    /// Downloads the pinned official mainnet CAR and verifies its root.
     Official,
-    /// Reads a checked-in, known v18 release CAR from disk and verifies its inferred root.
+    /// Reads a local CAR and verifies its manifest and referenced actor code.
     Local { path: PathBuf },
 }
 
@@ -38,22 +45,21 @@ impl ActorBundle {
         Ok(bundle)
     }
 
-    pub fn actor_version(&self) -> u32 {
-        ACTOR_BUNDLE_VERSION
-    }
-
-    pub(crate) fn expected_root(&self) -> Result<Option<Cid>, ConfigError> {
+    pub(crate) fn expected_root(
+        &self,
+        network_version: NetworkVersion,
+    ) -> Result<Option<Cid>, ConfigError> {
         match self {
-            Self::Official => Cid::from_str(DEFAULT_ACTOR_BUNDLE_ROOT)
+            Self::Official => Cid::from_str(official_bundle(network_version)?.1)
                 .map(Some)
                 .map_err(|error| ConfigError::InvalidOfficialBundleRoot(error.to_string())),
             Self::Local { .. } => Ok(None),
         }
     }
 
-    pub fn source_url(&self) -> Result<Option<Url>, ConfigError> {
+    pub fn source_url(&self, network_version: NetworkVersion) -> Result<Option<Url>, ConfigError> {
         match self {
-            Self::Official => Url::parse(DEFAULT_ACTOR_BUNDLE_URL)
+            Self::Official => Url::parse(official_bundle(network_version)?.2)
                 .map(Some)
                 .map_err(|error| ConfigError::InvalidOfficialBundleUrl(error.to_string())),
             Self::Local { .. } => Ok(None),
@@ -69,16 +75,23 @@ impl ActorBundle {
 
     fn validate(&self) -> Result<(), ConfigError> {
         match self {
-            Self::Official => {
-                self.expected_root()?;
-                self.source_url()?;
-            }
+            Self::Official => {}
             Self::Local { path } if path.as_os_str().is_empty() => {
                 return Err(ConfigError::EmptyBundlePath);
             }
             Self::Local { .. } => {}
         }
         Ok(())
+    }
+}
+
+fn official_bundle(
+    network_version: NetworkVersion,
+) -> Result<(u32, &'static str, &'static str), ConfigError> {
+    match network_version {
+        NetworkVersion::V28 => Ok((18, DEFAULT_ACTOR_BUNDLE_ROOT, DEFAULT_ACTOR_BUNDLE_URL)),
+        NetworkVersion::V29 => Ok((19, ACTOR_BUNDLE_V19_ROOT, ACTOR_BUNDLE_V19_URL)),
+        version => Err(ConfigError::UnsupportedNetworkVersion(version.into())),
     }
 }
 
@@ -107,6 +120,7 @@ impl GenesisAccount {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
     chain_id: u64,
+    network_version: NetworkVersion,
     actor_bundle: ActorBundle,
     actor_bundle_cache: Option<PathBuf>,
     prepared_state: Option<PathBuf>,
@@ -126,6 +140,7 @@ impl NodeConfig {
         actor_bundle.validate()?;
         Ok(Self {
             chain_id,
+            network_version: NETWORK_VERSION,
             actor_bundle,
             actor_bundle_cache: None,
             prepared_state: None,
@@ -139,6 +154,15 @@ impl NodeConfig {
             base_fee_per_gas: DEFAULT_BASE_FEE_PER_GAS,
             automine: true,
         })
+    }
+
+    pub fn with_network_version(
+        mut self,
+        network_version: NetworkVersion,
+    ) -> Result<Self, ConfigError> {
+        official_bundle(network_version)?;
+        self.network_version = network_version;
+        Ok(self)
     }
 
     pub fn with_genesis_accounts(mut self, accounts: Vec<GenesisAccount>) -> Self {
@@ -195,7 +219,16 @@ impl NodeConfig {
     }
 
     pub const fn network_version(&self) -> NetworkVersion {
-        NETWORK_VERSION
+        self.network_version
+    }
+
+    pub fn actor_bundle_version(&self) -> u32 {
+        official_bundle(self.network_version).expect("validated network version").0
+    }
+
+    /// The official release root for this network, regardless of a local bundle override.
+    pub fn official_actor_bundle_root(&self) -> &'static str {
+        official_bundle(self.network_version).expect("validated network version").1
     }
 
     pub const fn actor_bundle(&self) -> &ActorBundle {
@@ -258,8 +291,39 @@ mod tests {
         assert_eq!(config.chain_id(), DEFAULT_CHAIN_ID);
         assert_eq!(config.network_version(), NetworkVersion::V28);
         assert_eq!(config.network_version(), NETWORK_VERSION);
-        assert_eq!(config.actor_bundle().actor_version(), ACTOR_BUNDLE_VERSION);
+        assert_eq!(config.actor_bundle_version(), ACTOR_BUNDLE_VERSION);
         assert_eq!(config.actor_bundle(), &ActorBundle::Official);
+    }
+
+    #[test]
+    fn nv29_selects_the_official_v19_bundle() {
+        let config = NodeConfig::default().with_network_version(NetworkVersion::V29).unwrap();
+        assert_eq!(config.network_version(), NetworkVersion::V29);
+        assert_eq!(config.actor_bundle_version(), 19);
+        assert_eq!(config.official_actor_bundle_root(), super::ACTOR_BUNDLE_V19_ROOT);
+        assert_eq!(
+            config.actor_bundle().source_url(config.network_version()).unwrap().unwrap().as_str(),
+            super::ACTOR_BUNDLE_V19_URL
+        );
+        assert_eq!(
+            config
+                .actor_bundle()
+                .expected_root(config.network_version())
+                .unwrap()
+                .unwrap()
+                .to_string(),
+            super::ACTOR_BUNDLE_V19_ROOT
+        );
+    }
+
+    #[test]
+    fn unsupported_network_versions_are_rejected() {
+        for version in [NetworkVersion::V27, NetworkVersion::new(30)] {
+            assert!(matches!(
+                NodeConfig::default().with_network_version(version),
+                Err(ConfigError::UnsupportedNetworkVersion(_))
+            ));
+        }
     }
 
     #[test]

@@ -24,23 +24,23 @@ const EAM_ACTOR_ID: u64 = 10;
 const BURNT_FUNDS_ACTOR_ID: u64 = 99;
 const FIRST_NON_SINGLETON_ACTOR_ID: u64 = 100;
 
-// These tuple layouts are adapted from builtin-actors v18.0.0 system, init, and account state
-// definitions (Copyright Protocol Labs, MIT OR Apache-2.0). They intentionally reproduce only the
-// serialized genesis fields needed here, avoiding a production dependency on individual actors.
+// These tuple layouts are shared by builtin-actors v18.0.0 and v19.0.0 system, init, and account
+// state definitions (Copyright Protocol Labs / ChainSafe Systems, MIT OR Apache-2.0).
+// See actors/{system,init,account}/src at those upstream tags; only serialized fields are reproduced.
 #[derive(Serialize_tuple)]
-struct SystemStateV18 {
+struct SystemState {
     builtin_actors: Cid,
 }
 
 #[derive(Serialize_tuple)]
-struct InitStateV18 {
+struct InitState {
     address_map: Cid,
     next_id: u64,
     network_name: String,
 }
 
 #[derive(Serialize_tuple)]
-struct AccountStateV18 {
+struct AccountState {
     address: Address,
 }
 
@@ -69,11 +69,11 @@ pub(crate) fn create_genesis<BS: Blockstore>(
     let empty_state = store.put_cbor(&[(); 0], Code::Blake2b256).map_err(genesis_error)?;
 
     let system_state = store
-        .put_cbor(&SystemStateV18 { builtin_actors: bundle.manifest_data }, Code::Blake2b256)
+        .put_cbor(&SystemState { builtin_actors: bundle.manifest_data }, Code::Blake2b256)
         .map_err(genesis_error)?;
     let init_state = store
         .put_cbor(
-            &InitStateV18 {
+            &InitState {
                 address_map: empty_hamt,
                 next_id: FIRST_NON_SINGLETON_ACTOR_ID,
                 network_name: "fvm-anvil".to_owned(),
@@ -83,7 +83,7 @@ pub(crate) fn create_genesis<BS: Blockstore>(
         .map_err(genesis_error)?;
     let burnt_state = store
         .put_cbor(
-            &AccountStateV18 { address: Address::new_id(BURNT_FUNDS_ACTOR_ID) },
+            &AccountState { address: Address::new_id(BURNT_FUNDS_ACTOR_ID) },
             Code::Blake2b256,
         )
         .map_err(genesis_error)?;
@@ -198,4 +198,30 @@ fn actor(
 
 fn genesis_error(error: impl std::fmt::Display) -> NodeError {
     NodeError::Genesis(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fvm_ipld_encoding::to_vec;
+    use fvm_shared::EMPTY_ARR_CID;
+
+    #[test]
+    fn genesis_schemas_match_shared_v18_v19_actor_tuples() {
+        assert_eq!(
+            to_vec(&SystemState { builtin_actors: EMPTY_ARR_CID }).unwrap(),
+            to_vec(&(EMPTY_ARR_CID,)).unwrap()
+        );
+        assert_eq!(
+            to_vec(&InitState {
+                address_map: EMPTY_ARR_CID,
+                next_id: FIRST_NON_SINGLETON_ACTOR_ID,
+                network_name: "fvm-anvil".to_owned(),
+            })
+            .unwrap(),
+            to_vec(&(EMPTY_ARR_CID, FIRST_NON_SINGLETON_ACTOR_ID, "fvm-anvil")).unwrap()
+        );
+        let address = Address::new_id(BURNT_FUNDS_ACTOR_ID);
+        assert_eq!(to_vec(&AccountState { address }).unwrap(), to_vec(&(address,)).unwrap());
+    }
 }

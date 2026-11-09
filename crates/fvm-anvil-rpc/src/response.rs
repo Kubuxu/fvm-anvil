@@ -201,7 +201,7 @@ fn block_rewards(
         return Ok(vec![quantity(U256::ZERO); reward_percentiles.len()]);
     }
 
-    weighted_rewards.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    weighted_rewards.sort_unstable_by_key(|reward| reward.0);
     let total_gas =
         weighted_rewards.iter().map(|(_, gas_used)| u128::from(*gas_used)).sum::<u128>();
     let mut index = 0;

@@ -1,7 +1,7 @@
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use cid::Cid;
-use fvm_anvil_node::{HeadChange, NETWORK_VERSION, NativeTipset, NodeHandle};
+use fvm_anvil_node::{HeadChange, NativeTipset, NodeHandle};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -103,7 +103,7 @@ async fn execute(node: &NodeHandle, method: &str, params: Value) -> Result<Value
         }
         "Filecoin.StateNetworkVersion" => {
             node.native_tipset(parse_key(&params[0])?).await.map_err(node_error)?;
-            Ok(json!(u32::from(NETWORK_VERSION)))
+            Ok(json!(u32::from(node.network_version())))
         }
         "Filecoin.ChainGetTipSet" => {
             Ok(tipset(node.native_tipset(parse_key(&params[0])?).await.map_err(node_error)?))
