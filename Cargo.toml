@@ -36,6 +36,7 @@ alloy-primitives = { version = "=1.6.1", features = ["getrandom", "k256", "rand"
 alloy-rlp = "=0.3.16"
 alloy-rpc-types-eth = { version = "=2.2.0", default-features = false }
 alloy-signer-local = { version = "=2.2.0", default-features = false, features = ["mnemonic"] }
+alloy-signer = { version = "=2.2.0", default-features = false }
 anvil-rpc = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-rpc" }
 anvil-server = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911cd9dcbf6f71d80efcd8de50a206ac60", package = "anvil-server", default-features = false }
 
@@ -43,6 +44,7 @@ anvil-server = { git = "https://github.com/foundry-rs/foundry", rev = "522d19911
 # execution-semantic exception applies to reserved actor ID 98, which genesis never creates.
 fvm = { version = "~4.8.2", default-features = false, features = ["testing", "verify-signature"] }
 fvm_ipld_blockstore = "0.3.2"
+fvm_ipld_amt = "0.7.7"
 fvm_ipld_car = "0.9.1"
 fvm_ipld_encoding = "0.5.4"
 fvm_ipld_hamt = "0.10.6"
@@ -51,7 +53,7 @@ fvm_shared = "~4.8.2"
 
 anyhow = "1.0.100"
 async-trait = "0.1.89"
-axum = "=0.8.9"
+axum = { version = "=0.8.9", features = ["ws"] }
 bytes = "1.10"
 cid = { version = "0.11.3", features = ["serde", "std"] }
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -65,6 +67,7 @@ thiserror = "2.0"
 tempfile = "3.23"
 tokio = { version = "1.48", features = ["macros", "net", "rt", "signal", "sync", "time"] }
 tracing = "0.1"
+tower-http = { version = "0.7", features = ["cors"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2.5"
 ureq = { version = "=3.1.2", default-features = false, features = ["rustls"] }

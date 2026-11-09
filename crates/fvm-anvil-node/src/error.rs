@@ -73,6 +73,16 @@ pub enum NodeError {
     StaleNonce { expected: u64, actual: u64 },
     #[error("transaction nonce {actual} is in the future; expected {expected}")]
     FutureNonce { expected: u64, actual: u64 },
+    #[error(
+        "replacement transaction underpriced; both fee cap and premium must increase by at least 10%"
+    )]
+    ReplacementUnderpriced,
+    #[error("transaction reservation arithmetic overflow")]
+    ReservationOverflow,
+    #[error("native tipset is unavailable: {0}")]
+    UnknownTipset(String),
+    #[error("randomness epoch {epoch} is outside available history {minimum}..={maximum}")]
+    RandomnessEpoch { epoch: i64, minimum: i64, maximum: i64 },
     #[error("transaction fee cap {fee_cap} is below the current base fee {base_fee}")]
     FeeCapTooLow { fee_cap: u128, base_fee: u128 },
     #[error("transaction priority fee {priority_fee} exceeds its fee cap {fee_cap}")]

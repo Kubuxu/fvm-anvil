@@ -3,3 +3,5 @@ extern
 /tests/acceptance/cache/
 /tests/acceptance/out/
 snapshots
+/.curio-build/
+/.curio-acceptance/

@@ -8,6 +8,7 @@ mod config;
 mod error;
 mod externs;
 mod genesis;
+mod native;
 mod runtime;
 mod service;
 mod storage;
@@ -20,6 +21,7 @@ pub use config::{
     DEFAULT_PREFUNDED_ETH_ADDRESS, GenesisAccount, NETWORK_VERSION, NodeConfig,
 };
 pub use error::{BundleError, ConfigError, NodeError};
+pub use native::{HeadChange, NativeTipset};
 pub use service::{NodeHandle, NodeService, NodeStartupInfo};
 pub use types::{
     BASE_FEE_PER_GAS, BLOCK_GAS_LIMIT, Block, BlockSelector, CallRequest, FilecoinCallTrace,

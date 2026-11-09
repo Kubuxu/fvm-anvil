@@ -88,6 +88,10 @@ pub fn receipt(receipt: NodeTransactionReceipt) -> Result<Value, String> {
 
 pub fn block(block: Block, full_transactions: bool) -> Result<Value, String> {
     let block_logs_bloom = logs_bloom(&block.logs);
+    let transactions_root = alloy_consensus::proofs::ordered_trie_root_with_encoder(
+        &block.transactions,
+        |transaction, encoded| encoded.extend_from_slice(transaction.raw.as_ref()),
+    );
     let transactions = if full_transactions {
         block.transactions.into_iter().map(transaction).collect::<Result<Vec<_>, _>>()?
     } else {
@@ -102,7 +106,7 @@ pub fn block(block: Block, full_transactions: bool) -> Result<Value, String> {
     );
     response.insert("miner".to_owned(), json!(Address::ZERO));
     response.insert("stateRoot".to_owned(), json!(block.state_root));
-    response.insert("transactionsRoot".to_owned(), json!(B256::ZERO));
+    response.insert("transactionsRoot".to_owned(), json!(transactions_root));
     response.insert("receiptsRoot".to_owned(), json!(B256::ZERO));
     response.insert("logsBloom".to_owned(), json!(block_logs_bloom));
     response.insert("difficulty".to_owned(), json!("0x0"));

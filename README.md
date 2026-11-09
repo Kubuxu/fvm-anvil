@@ -8,6 +8,10 @@ Ethereum blocks, receipts, and state queries are compatibility views over FVM ac
 
 The core workflow is implemented: contract deployment, calls, transactions, receipts, logs, gas estimation, manual and automatic mining, and snapshots. The RPC surface is smaller than Anvil's; the current method list is maintained in [the design document](docs/design.md#implemented-rpc-compatibility).
 
+Curio PDP is also supported: native Filecoin head/history/beacon APIs and WebSocket head
+notifications work alongside Ethereum RPC. The writable Skiff workflow is verified with
+a freshly deployed FWSS 1.5.0/PDPVerifier 3.5.0 stack and Docker PostgreSQL/ScyllaDB.
+
 This project does not provide Filecoin consensus, Forge cheatcodes, general remote-chain forking, or opcode-level Geth traces.
 
 ## Build and run
@@ -30,6 +34,26 @@ cast balance 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
 ```
 
 Run `target/release/fvm-anvil --help` for account, genesis, mining, actor-bundle, prepared-state, and server options.
+
+## Curio PDP and fresh FWSS deployment
+
+Follow the [step-by-step Curio/FWSS guide](tests/curio/README.md) to select the tested
+source revisions, build Skiff, launch a local node, deploy the contract graph, and run
+dataset creation, piece ingestion, and real proof submission.
+
+Native `Filecoin.*` and Ethereum methods share `/rpc/v1`; `Filecoin.ChainNotify` uses
+Go-compatible WebSocket channels. The guide includes direct RPC examples, Curio's
+WebSocket-origin configuration, signer setup, result inspection, and clean repeat runs.
+
+This workflow starts from fresh local state, not a downloaded mainnet snapshot. Its default
+development payment token is native-FIL-backed Solady WETH, **not USDFC**; an existing
+real 18-decimal token can be supplied. PoRep, PoSt, native mining/wallet APIs, and general
+Lotus compatibility are not included.
+
+The [completed compatibility record](docs/curio-compatibility-plan.md) lists the supported
+APIs, limits, tested revisions, and verification evidence. The separate
+[FWSS benchmark](benchmarks/fwss/README.md) uses historical imported state and a different
+deployment model.
 
 ## Filecoin diagnostics
 

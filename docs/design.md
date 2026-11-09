@@ -1,7 +1,7 @@
 # fvm-anvil design and behavior
 
 Status: living design record  
-Last updated: 2026-08-11
+Last updated: 2026-11-09
 
 Current implementation status and remaining work are tracked in
 [`docs/implementation-plan.md`](implementation-plan.md).
@@ -26,12 +26,15 @@ Product scope:
 - Anvil-compatible transaction pooling, block production, snapshots, reverts, and development
   controls where FEVM can implement them honestly.
 - Filecoin-specific gas breakdown and trace endpoints in a separate namespace.
+- Curio PDP-only development, with native Filecoin head/history/beacon reads and
+  Go-compatible WebSocket head notifications alongside Ethereum RPC.
 
 Explicitly out of scope:
 
 - A Forge test runner.
 - Foundry cheatcode execution.
-- Full Filecoin consensus, mining, cron, null rounds, actor migrations, proofs, or tipset competition.
+- Full Filecoin consensus, mining, cron, null rounds, actor migrations, PoRep/PoSt proofs,
+  or tipset competition. EVM contract-based PDP proving is supported.
 - General native actor behavior beyond the actors mechanically required by FVM execution.
 
 General remote chain forking remains parked. Offline preparation and import of selected mainnet
@@ -134,7 +137,8 @@ Dependency rules:
 
 From Foundry:
 
-- `extern/foundry/crates/anvil/server` for HTTP, batching, CORS, and generic RPC handler plumbing.
+- `anvil-server` for root HTTP, batching, CORS, and generic RPC handler plumbing; local Axum
+  routing adds HTTP/WebSocket `/rpc/v1` with Go-compatible Filecoin channel framing.
 - `extern/foundry/crates/anvil/rpc` for JSON-RPC requests, responses, and errors.
 - Alloy Ethereum transaction and RPC types.
 
@@ -288,6 +292,34 @@ The implemented Anvil controls are:
 - `anvil_dealERC20` (`hardhat_dealERC20`), `anvil_setERC20Balance`, and
   `anvil_setERC20Allowance`.
 
+Curio PDP's native Filecoin boundary is served at `/rpc/v1` over HTTP and WebSocket:
+
+- `Filecoin.StateNetworkName` (`local-fvm-anvil`) and `Filecoin.StateNetworkVersion`;
+- `Filecoin.ChainHead`, `Filecoin.ChainGetTipSet`, and `Filecoin.ChainGetTipSetByHeight`;
+- `Filecoin.StateGetRandomnessDigestFromBeacon`;
+- `Filecoin.ChainNotify` over Go `go-jsonrpc` WebSocket channels, with initial `current`,
+  committed `apply`, snapshot `revert`, cancellation, and reconnect initialization.
+
+These headers are synthetic Lotus-decodable projections, not consensus-valid miner blocks.
+Header CIDs hash canonical Lotus CBOR; the tipset-key CID hashes the CBOR byte string of
+concatenated header CID bytes. The FVM chain extern uses that same key CID. Historical
+queries are bounded by local genesis or the prepared import; absent keys and unavailable
+epochs fail explicitly. Beacon digest queries return the same deterministic raw 32 bytes
+used by ref-FVM's beacon randomness syscall, not domain-separated final randomness.
+Native wallet, miner, PoRep/PoSt, object, and general Lotus API compatibility remain unsupported.
+
+Pending Ethereum transactions can be replaced in-place by the same sender and nonce.
+Both fee cap and premium must increase by at least 10%, rounded up, with a minimum
+increase of one attoFIL. Replacement excludes the old entry from gas and balance reservations,
+preserves later nonces, and leaves the old transaction intact on failed validation.
+Ethereum block transaction roots use the ordered trie over original EIP-2718 envelopes;
+empty blocks expose the canonical empty root for Go Ethereum block-body decoding.
+
+The writable PDP recipe, latest checked-out FWSS deployment, PostgreSQL/ScyllaDB Docker
+dependencies, and actual Curio acceptance command are in
+[`tests/curio/README.md`](../tests/curio/README.md). PDP runs require a realistic genesis timestamp
+and interval mining of empty blocks so proof schedules and receipt confidence advance.
+
 Methods outside this surface return JSON-RPC `method not found`; they must not report success without
 an FEVM implementation.
 
@@ -341,19 +373,18 @@ honestly change contract-visible behavior must remain unsupported.
 ## Remaining compatibility work
 
 The current roadmap is maintained in [`docs/implementation-plan.md`](implementation-plan.md).
-Priorities include time controls, pool ordering and inspection, ERC-20 balance and allowance
-helpers, and writable-overlay persistence. Foundry implements the ERC-20 helpers by collecting a
-call's storage access list and retrying the call with one candidate state override at a time;
-fvm-anvil needs honest FEVM access-list or storage-access tracing plus simulation state overrides
-before it can reproduce that behavior.
+Priorities include time controls, pool ordering and inspection, and writable-overlay
+persistence. ERC-20 balance/allowance helpers are implemented for standard Solidity mapping
+layouts using validated ephemeral state overrides. General nonstandard layout discovery
+remains unsupported; it would require additional storage-access tracing or equivalent evidence.
 
 `anvil_dumpState`, `anvil_loadState`, and `anvil_reset` also remain unsupported. Foundry's dump is a
 gzip-compressed serialization of its Ethereum database and block environment, not an FVM state
 format; fvm-anvil persistence must retain the writable IPLD overlay and adopted FVM root instead of
 claiming wire compatibility with that blob.
 
-WebSocket subscriptions, IPC, broader Anvil extensions, and general remote-chain forking remain
-deferred. State preparation with selected mainnet actors is provided by
+Ethereum subscriptions (`eth_subscribe`), IPC, broader Anvil extensions, and general remote-chain
+forking remain deferred. State preparation with selected mainnet actors is provided by
 [`press`](press.md), but it is not consensus-history import or remote RPC forking.
 
 ## Acceptance runner

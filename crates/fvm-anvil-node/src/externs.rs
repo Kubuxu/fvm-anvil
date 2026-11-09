@@ -1,12 +1,15 @@
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use cid::Cid;
 use fvm::externs::{Chain, Consensus, Externs, Rand};
-use fvm_ipld_encoding::DAG_CBOR;
 use fvm_shared::clock::ChainEpoch;
 use fvm_shared::consensus::ConsensusFault;
 use multihash_codetable::{Code, MultihashDigest};
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct DeterministicExterns;
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DeterministicExterns {
+    pub(crate) tipsets: Rc<RefCell<HashMap<ChainEpoch, Cid>>>,
+}
 
 impl DeterministicExterns {
     fn digest(domain: u8, round: ChainEpoch) -> cid::multihash::Multihash<64> {
@@ -22,6 +25,12 @@ impl DeterministicExterns {
         randomness.copy_from_slice(digest.digest());
         randomness
     }
+
+    // This is the raw 32-byte beacon digest returned unchanged by ref-FVM's
+    // get_randomness_from_beacon syscall (FIP-0095), not draw_randomness output.
+    pub(crate) fn beacon_digest(round: ChainEpoch) -> [u8; 32] {
+        Self::randomness(1, round)
+    }
 }
 
 impl Rand for DeterministicExterns {
@@ -30,7 +39,7 @@ impl Rand for DeterministicExterns {
     }
 
     fn get_beacon_randomness(&self, round: ChainEpoch) -> anyhow::Result<[u8; 32]> {
-        Ok(Self::randomness(1, round))
+        Ok(Self::beacon_digest(round))
     }
 }
 
@@ -47,7 +56,11 @@ impl Consensus for DeterministicExterns {
 
 impl Chain for DeterministicExterns {
     fn get_tipset_cid(&self, epoch: ChainEpoch) -> anyhow::Result<Cid> {
-        Ok(Cid::new_v1(DAG_CBOR, Self::digest(2, epoch)))
+        self.tipsets
+            .borrow()
+            .get(&epoch)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("tipset epoch {epoch} is unavailable"))
     }
 }
 
@@ -61,7 +74,7 @@ mod tests {
 
     #[test]
     fn randomness_and_tipsets_are_stable_and_domain_separated() {
-        let externs = DeterministicExterns;
+        let externs = DeterministicExterns::default();
 
         assert_eq!(
             externs.get_chain_randomness(12).unwrap(),
@@ -71,7 +84,6 @@ mod tests {
             externs.get_chain_randomness(12).unwrap(),
             externs.get_beacon_randomness(12).unwrap()
         );
-        assert_eq!(externs.get_tipset_cid(12).unwrap(), externs.get_tipset_cid(12).unwrap());
-        assert_ne!(externs.get_tipset_cid(12).unwrap(), externs.get_tipset_cid(13).unwrap());
+        assert!(externs.get_tipset_cid(12).is_err());
     }
 }

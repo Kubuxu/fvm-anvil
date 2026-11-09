@@ -24,7 +24,7 @@ use fvm_anvil_node::{
     DEFAULT_GENESIS_TIMESTAMP, DEFAULT_PREFUNDED_BALANCE_FIL, GenesisAccount, NETWORK_VERSION,
     NodeConfig, NodeHandle, NodeService,
 };
-use fvm_anvil_rpc::{RpcService, ServerConfig, http_router};
+use fvm_anvil_rpc::{RpcService, ServerConfig, rpc_router};
 use rand_08::{SeedableRng, rngs::StdRng};
 use serde::Serialize;
 
@@ -459,7 +459,7 @@ async fn run(config: AppConfig) -> Result<()> {
         .with_context(|| format!("failed to bind JSON-RPC listener at {listen_addr}"))?;
     let bound_addr = listener.local_addr().context("failed to inspect JSON-RPC listener")?;
     let rpc_url = format!("http://{bound_addr}");
-    let router = http_router(server, RpcService::new(handle.clone()));
+    let router = rpc_router(server, RpcService::new(handle.clone()));
     let accounts = handle.accounts().await.context("failed to inspect genesis accounts")?;
 
     let output = StartupOutput {

@@ -1,0 +1,29 @@
+name: fvm-anvil-curio
+services:
+  postgres:
+    image: postgres:16.6
+    environment:
+      POSTGRES_USER: curio
+      POSTGRES_PASSWORD: curio-local-only
+      POSTGRES_DB: curio
+    ports: ["127.0.0.1:15432:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U curio -d curio"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  cql:
+    image: scylladb/scylla:6.2.3
+    command: ["--smp", "1", "--memory", "1G", "--overprovisioned", "1"]
+    ports: ["127.0.0.1:19042:9042"]
+    volumes: ["cql:/var/lib/scylla"]
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT release_version FROM system.local'"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 40s
+volumes:
+  postgres:
+  cql:

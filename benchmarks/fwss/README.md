@@ -4,6 +4,19 @@ This benchmark compares PDPVerifier and Filecoin Warm Storage Service implementa
 
 Run commands from the repository root.
 
+## Scope: imported-state benchmarks, not fresh Curio deployment
+
+The configured baseline is the historical FWSS 1.3.0/PDPVerifier 3.4.0 archive.
+The current local FWSS build entry expects a monolithic
+`out/FilecoinWarmStorageService.sol/FilecoinWarmStorageService.json` artifact and a
+single-implementation proxy upgrade. It does **not** deploy FWSS 1.5.0's ERC-8167
+dispatcher/facet graph; cloning the latest Filecoin Services checkout does not make
+those local variants compatible.
+
+For the verified fresh FWSS 1.5.0/PDPVerifier 3.5.0 deployment and writable Curio
+workflow, use [`tests/curio/README.md`](../../tests/curio/README.md). That workflow
+validates real PDP proving but is not a replacement for benchmark measurements.
+
 ## Prerequisites
 
 - `cast` and `forge` from Foundry.
@@ -17,14 +30,14 @@ Build the node:
 $ cargo build --release -p fvm-anvil
 ```
 
-The local variants use independent, ignored checkouts under `extern/`; they do not depend on sibling repositories outside this checkout. Create both clones with their pinned submodules:
+The local variants use independent, ignored checkouts under `extern/`; they do not depend on sibling repositories outside this checkout. The following commands acquire sources only. Select revisions compatible with the artifact paths and upgrade protocol in `suite.json` before using a local variant:
 
 ```console
 $ git clone --recurse-submodules https://github.com/FilOzone/pdp.git extern/pdp
 $ git clone --recurse-submodules https://github.com/FilOzone/filecoin-services.git extern/filecoin-services
 ```
 
-Build each Solidity project once with `forge build` to confirm the checked-out revisions compile. The runner rebuilds them before deploying local variants.
+Build each selected Solidity revision once with `forge build` to confirm it compiles and produces the configured artifact. The runner rebuilds it before deploying local variants. Do not use the latest dispatcher/facet FWSS checkout with the existing monolithic build entry.
 
 ## Start the node
 

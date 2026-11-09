@@ -22,8 +22,15 @@ alloy-rpc-types-eth = { workspace = true, features = ["serde", "std"] }
 anvil-rpc.workspace = true
 anvil-server = { workspace = true, default-features = false }
 async-trait.workspace = true
+axum.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+base64 = "0.22"
+cid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+
 [dev-dependencies]
-cid.workspace = true
+tokio-tungstenite = "=0.29.0"
