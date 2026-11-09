@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afa150cd076471ef21aa7b181d8186cb86c3239518859a2e5d80fbec74f0ec38"
+checksum = "bc43a73bc1bf7044898e1b0dcefaba45d0cfac3e379bb5ca29cc3e3a04c61451"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -2456,6 +2456,7 @@ checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
 dependencies = [
  "futures-channel",
  "futures-core",
+ "futures-executor",
  "futures-io",
  "futures-sink",
  "futures-task",
@@ -2479,10 +2480,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
 
 [[package]]
+name = "futures-executor"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6754879cc9f2c66f88c6e5c35344bb0bdb0708b0352b1201815667c7eabc7458"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-io"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4577ecaa3c4f96589d473f679a71b596316f6641bc350038b962a5daf0085d7a"
+
+[[package]]
+name = "futures-macro"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d6d3cde68c518367be28956066ddfef33813991b77a55005a69dae04bf3b10b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "futures-sink"
@@ -2502,9 +2525,13 @@ version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
 dependencies = [
+ "futures-channel",
  "futures-core",
+ "futures-io",
+ "futures-macro",
  "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "slab",
 ]
@@ -2585,12 +2612,17 @@ dependencies = [
 name = "fvm-anvil-node"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "anyhow",
  "cid",
  "fvm",
  "fvm-anvil-eth",
  "fvm-anvil-state",
+ "fvm_ipld_amt",
  "fvm_ipld_blockstore",
  "fvm_ipld_car",
  "fvm_ipld_encoding",
@@ -2616,10 +2648,16 @@ dependencies = [
  "anvil-rpc",
  "anvil-server",
  "async-trait",
+ "axum",
+ "base64 0.22.1",
  "cid",
+ "futures",
  "fvm-anvil-node",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tower-http",
 ]
 
 [[package]]

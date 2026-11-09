@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::config::NodeConfig;
 use crate::error::NodeError;
+use crate::native::{HeadChange, NativeTipset};
 use crate::runtime::NodeRuntime;
 use crate::types::{
     Block, BlockSelector, CallRequest, FilecoinGasBreakdown, FilecoinGasTrace, FilecoinStateRoots,
@@ -23,6 +24,29 @@ pub struct NodeHandle {
 }
 
 impl NodeHandle {
+    /// Empty keys select the current head; nonempty keys must be canonical local keys.
+    pub async fn native_tipset(&self, key: Vec<Cid>) -> Result<NativeTipset, NodeError> {
+        self.request(|reply| WorkerCommand::NativeTipset { key, reply }).await
+    }
+
+    pub async fn native_tipset_by_height(
+        &self,
+        height: i64,
+        key: Vec<Cid>,
+    ) -> Result<NativeTipset, NodeError> {
+        self.request(|reply| WorkerCommand::NativeTipsetByHeight { height, key, reply }).await
+    }
+
+    /// Returns the same raw beacon digest supplied to ref-FVM, bounded by the selected history.
+    pub async fn beacon_digest(&self, epoch: i64, key: Vec<Cid>) -> Result<[u8; 32], NodeError> {
+        self.request(|reply| WorkerCommand::BeaconDigest { epoch, key, reply }).await
+    }
+
+    /// Registration atomically enqueues Current before any later canonical head changes.
+    pub async fn subscribe_heads(&self) -> Result<mpsc::Receiver<Vec<HeadChange>>, NodeError> {
+        self.request(|reply| WorkerCommand::SubscribeHeads { reply }).await
+    }
+
     pub async fn chain_id(&self) -> Result<u64, NodeError> {
         self.request(|reply| WorkerCommand::ChainId { reply }).await
     }
@@ -288,6 +312,23 @@ impl NodeService {
 }
 
 enum WorkerCommand {
+    NativeTipset {
+        key: Vec<Cid>,
+        reply: Reply<NativeTipset>,
+    },
+    NativeTipsetByHeight {
+        height: i64,
+        key: Vec<Cid>,
+        reply: Reply<NativeTipset>,
+    },
+    BeaconDigest {
+        epoch: i64,
+        key: Vec<Cid>,
+        reply: Reply<[u8; 32]>,
+    },
+    SubscribeHeads {
+        reply: Reply<mpsc::Receiver<Vec<HeadChange>>>,
+    },
     ChainId {
         reply: Reply<u64>,
     },
@@ -450,6 +491,18 @@ fn run_worker(
 
     while let Some(command) = commands.blocking_recv() {
         match command {
+            WorkerCommand::NativeTipset { key, reply } => {
+                let _ = reply.send(runtime.native_tipset(&key));
+            }
+            WorkerCommand::NativeTipsetByHeight { height, key, reply } => {
+                let _ = reply.send(runtime.native_tipset_by_height(height, &key));
+            }
+            WorkerCommand::BeaconDigest { epoch, key, reply } => {
+                let _ = reply.send(runtime.beacon_digest(epoch, &key));
+            }
+            WorkerCommand::SubscribeHeads { reply } => {
+                let _ = reply.send(Ok(runtime.subscribe_heads()));
+            }
             WorkerCommand::ChainId { reply } => {
                 let _ = reply.send(Ok(runtime.chain_id()));
             }
@@ -548,7 +601,12 @@ fn run_worker(
 mod tests {
     use std::path::PathBuf;
 
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::TxKind;
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
 
     use super::NodeService;
     use crate::config::{
@@ -589,6 +647,150 @@ mod tests {
                 charge_count + call.gas_charges.len() + subcall_charge_count,
             )
         })
+    }
+
+    fn signed_transfer(nonce: u64, gas_limit: u64, cap: u128, premium: u128) -> Bytes {
+        let signer: PrivateKeySigner =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
+        let transaction = TxEip1559 {
+            chain_id: DEFAULT_CHAIN_ID,
+            nonce,
+            gas_limit,
+            max_fee_per_gas: cap,
+            max_priority_fee_per_gas: premium,
+            to: TxKind::Call(PREFUNDED_ETH_ADDRESS),
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&transaction.signature_hash()).unwrap();
+        transaction.into_signed(signature).encoded_2718().into()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FVM_ANVIL_ACTOR_BUNDLE to point to the official builtin-actors v18 mainnet CAR"]
+    async fn replacement_reservations_identity_and_snapshot_ownership() {
+        let service = real_service();
+        let node = service.handle();
+        node.set_automine(false).await.unwrap();
+        let old = node
+            .submit_raw_transaction(signed_transfer(0, 6_000_000_000, 1000, 100))
+            .await
+            .unwrap();
+        let successor = node
+            .submit_raw_transaction(signed_transfer(1, 4_000_000_000, 1000, 100))
+            .await
+            .unwrap();
+        assert!(matches!(
+            node.submit_raw_transaction(signed_transfer(0, 6_000_000_000, 1100, 109)).await,
+            Err(NodeError::ReplacementUnderpriced)
+        ));
+        assert!(matches!(
+            node.submit_raw_transaction(signed_transfer(0, 6_000_000_001, 1100, 110)).await,
+            Err(NodeError::PendingBlockGasLimit { .. })
+        ));
+        node.set_balance(PREFUNDED_ETH_ADDRESS, U256::from(10_000_000_000_000_u64)).await.unwrap();
+        assert!(matches!(
+            node.submit_raw_transaction(signed_transfer(0, 6_000_000_000, 1100, 110)).await,
+            Err(NodeError::InsufficientFunds { .. })
+        ));
+        assert!(node.transaction_by_hash(old).await.unwrap().is_some());
+        node.set_balance(PREFUNDED_ETH_ADDRESS, U256::from(10_600_000_000_000_u64)).await.unwrap();
+        let replacement = node
+            .submit_raw_transaction(signed_transfer(0, 6_000_000_000, 1100, 110))
+            .await
+            .unwrap();
+        assert!(node.transaction_by_hash(old).await.unwrap().is_none());
+        assert_eq!(node.transaction_by_hash(replacement).await.unwrap().unwrap().block_hash, None);
+        assert_eq!(
+            node.transaction_count(PREFUNDED_ETH_ADDRESS, BlockSelector::Pending).await.unwrap(),
+            2
+        );
+        let snapshot = node.snapshot().await.unwrap();
+        let blocks = node.mine_blocks(1, None, None).await.unwrap();
+        assert_eq!(
+            blocks[0].transactions.iter().map(|tx| tx.hash).collect::<Vec<_>>(),
+            vec![replacement, successor]
+        );
+        assert!(node.revert(snapshot).await.unwrap());
+        assert!(node.transaction_by_hash(replacement).await.unwrap().is_none());
+        assert!(node.transaction_receipt(replacement).await.unwrap().is_none());
+        assert_eq!(
+            node.transaction_count(PREFUNDED_ETH_ADDRESS, BlockSelector::Pending).await.unwrap(),
+            0
+        );
+        // A mined-away pool entry is not resurrected by reverting canonical state.
+        node.submit_raw_transaction(signed_transfer(0, 6_000_000_000, 1100, 110)).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FVM_ANVIL_ACTOR_BUNDLE to point to the official builtin-actors v18 mainnet CAR"]
+    async fn native_history_notifications_and_raw_beacon_precompile() {
+        let service = real_service();
+        let node = service.handle();
+        let mut heads = node.subscribe_heads().await.unwrap();
+        let genesis = node.native_tipset(Vec::new()).await.unwrap();
+        assert_eq!(heads.recv().await.unwrap(), vec![crate::HeadChange::Current(genesis.clone())]);
+        let snapshot = node.snapshot().await.unwrap();
+        node.mine_blocks(3, None, None).await.unwrap();
+        let changes = heads.recv().await.unwrap();
+        assert_eq!(changes.len(), 3);
+        let first = node.native_tipset_by_height(1, Vec::new()).await.unwrap();
+        assert_eq!(first.parents, vec![genesis.cid]);
+        assert!(matches!(&changes[0], crate::HeadChange::Apply(head) if head == &first));
+        assert!(node.beacon_digest(2, vec![first.cid]).await.is_err());
+        let digest = node.beacon_digest(2, Vec::new()).await.unwrap();
+        let address = Address::repeat_byte(0x77);
+        // Copy the epoch from calldata and STATICCALL the FIP-0095 beacon precompile.
+        node.set_code(address, Bytes::from_static(&hex!(
+            "600035600052602060006020600073fe000000000000000000000000000000000000065afa5060206000f3"
+        ))).await.unwrap();
+        let output = node
+            .call(
+                CallRequest {
+                    to: Some(address),
+                    input: Bytes::copy_from_slice(&U256::from(2).to_be_bytes::<32>()),
+                    ..CallRequest::default()
+                },
+                BlockSelector::Latest,
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.as_ref(), digest.as_slice());
+        assert!(node.revert(snapshot).await.unwrap());
+        let changes = heads.recv().await.unwrap();
+        assert_eq!(changes.len(), 4);
+        assert!(matches!(&changes[0], crate::HeadChange::Revert(head) if head.height == 3));
+        assert!(matches!(&changes[2], crate::HeadChange::Revert(head) if head.height == 1));
+        assert_eq!(changes[3], crate::HeadChange::Apply(genesis.clone()));
+        assert!(node.native_tipset(vec![first.cid]).await.is_err());
+        drop(heads);
+        let mut reconnected = node.subscribe_heads().await.unwrap();
+        assert_eq!(reconnected.recv().await.unwrap(), vec![crate::HeadChange::Current(genesis)]);
+        // Backpressure closes a lagging subscription rather than blocking the worker.
+        for _ in 0..65 {
+            node.mine_blocks(1, None, None).await.unwrap();
+        }
+        let mut buffered = 0;
+        while reconnected.recv().await.is_some() {
+            buffered += 1;
+        }
+        assert_eq!(buffered, 64);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FVM_ANVIL_ACTOR_BUNDLE to point to the official builtin-actors v18 mainnet CAR"]
+    async fn native_parent_state_uses_direct_override_execution_root() {
+        let service = real_service();
+        let node = service.handle();
+        let original = node.filecoin_state_roots().await.unwrap().current;
+        let account = node.accounts().await.unwrap()[0];
+        node.set_balance(account, U256::from(123_456)).await.unwrap();
+        let overridden = node.filecoin_state_roots().await.unwrap().current;
+        assert_ne!(original, overridden);
+        node.mine_blocks(2, None, None).await.unwrap();
+        let first = node.native_tipset_by_height(1, Vec::new()).await.unwrap();
+        let second = node.native_tipset_by_height(2, Vec::new()).await.unwrap();
+        assert_eq!(first.parent_state_root, overridden);
+        assert_eq!(second.parent_state_root, overridden);
     }
 
     #[tokio::test]

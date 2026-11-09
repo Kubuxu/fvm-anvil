@@ -1,10 +1,16 @@
 # Press recipe authoring notes
 
 Status: working runbook  
-Last updated: 2026-08-05
+Last updated: 2026-11-09
 
 This runbook covers source checks, dependency analysis, patch derivation, and runtime proof for
 turning a contract deployment into a reproducible Press recipe.
+
+These recipes reproduce historical on-chain deployments; their recorded versions and
+addresses are intentional, not the latest local FWSS target. For a fresh FWSS 1.5.0 /
+PDPVerifier 3.5.0 deployment and writable Curio PDP workflow, use the
+[Curio/FWSS guide](../tests/curio/README.md). That workflow needs no Forest snapshot
+or prepared archive.
 
 ## Inputs to pin
 

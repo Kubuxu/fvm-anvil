@@ -6,6 +6,16 @@ Build a development benchmark for the supported PDPVerifier callbacks into the F
 
 Simplicity is a requirement. The benchmark is a local development tool, not a permanent reproducibility or archival system.
 
+## Deployment-model boundary
+
+This design describes the imported FWSS 1.3.0 baseline and the existing
+single-implementation upgrade runner. Its local FWSS build expects a monolithic
+implementation artifact. The fresh FWSS 1.5.0 ERC-8167 dispatcher/facet deployment
+is implemented separately in [`tests/curio`](../../tests/curio/README.md), not by
+this benchmark's `local-new` variant. The matrix examples below describe the
+benchmark protocol; they do not establish compatibility with arbitrary newer source trees.
+
+
 ## Scope
 
 Measure the public transactions that invoke every supported FWSS callback:

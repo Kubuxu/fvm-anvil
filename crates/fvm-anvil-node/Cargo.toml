@@ -21,6 +21,7 @@ anyhow.workspace = true
 cid.workspace = true
 fvm.workspace = true
 fvm_ipld_blockstore.workspace = true
+fvm_ipld_amt.workspace = true
 fvm_ipld_car.workspace = true
 fvm_ipld_encoding.workspace = true
 fvm_ipld_kamt.workspace = true
@@ -32,3 +33,9 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 ureq.workspace = true
+
+[dev-dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true

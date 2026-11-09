@@ -1,7 +1,7 @@
 # fvm-anvil implementation plan
 
 Status: active  
-Last updated: 2026-08-11
+Last updated: 2026-11-09
 
 This document records current component ownership and remaining implementation work. Design
 rationale and compatibility constraints live in [`docs/design.md`](design.md). Offline state
@@ -13,6 +13,14 @@ The executable transaction path, HTTP RPC transport, synthetic canonical chain, 
 interval/mixed startup mining, snapshots, direct account balance/nonce/code/storage controls,
 Filecoin gas diagnostics, deterministic development accounts, and prepared-state import are
 implemented.
+
+The Curio PDP boundary is implemented and verified: native tipset/history reads, shared raw
+beacon randomness, Go-compatible WebSocket head channels on `/rpc/v1`, and Ethereum pending
+fee replacement. The writable Skiff workflow completed creation/add/proving against freshly
+deployed FWSS 1.5.0/PDPVerifier 3.5.0 with PostgreSQL/ScyllaDB in Docker.
+Use the [runnable guide](../tests/curio/README.md) for setup and the
+[completed compatibility record](curio-compatibility-plan.md) for tested revisions and evidence.
+This work is complete, not a pending native-miner or general Lotus compatibility phase.
 
 Remaining work is broader Anvil development-control compatibility and writable-overlay persistence.
 The authoritative implemented RPC list is in
@@ -76,6 +84,7 @@ A worker-local `NodeRuntime` is the only owner of:
 - The adopted FVM state root.
 - Actor bundle and manifest artifacts.
 - Synthetic blocks and historical roots.
+- Canonical synthetic Filecoin headers, tipset-key CIDs, and bounded head subscriptions.
 - Transaction, receipt, log, and gas indexes.
 - The pending transaction pool.
 - Mining mode.
@@ -101,10 +110,12 @@ execute_at(root, block_context, prepared_messages, mode) -> candidate execution 
 commit_block(candidate batch) -> adopted root plus canonical indexes
 ```
 
-Only canonical block commit may publish a root, advance the head, update canonical indexes, or
-remove included pool entries. Calls and gas estimation execute without publishing their candidate
-root. Fatal machine/executor errors leave the adopted root and indexes unchanged; normal actor
-failure exit codes produce failed transaction receipts and are committed.
+Canonical block commit publishes execution roots, advances the head, updates canonical indexes,
+and removes included pool entries atomically. Direct state controls separately publish validated
+current roots without mining; snapshot/revert restores the selected chain-visible state.
+Calls and gas estimation never adopt their candidate roots. Fatal machine/executor errors leave
+the adopted root and indexes unchanged; normal actor failure exit codes produce failed receipts
+and are committed.
 
 ### `fvm-anvil-rpc`
 
@@ -115,11 +126,14 @@ This crate owns:
 - Quantity and fixed-byte validation.
 - Node-domain command construction and result conversion.
 - JSON-RPC error mapping.
-- HTTP transport using generic Foundry `anvil-server`/`anvil-rpc` plumbing.
-- Standard Ethereum responses and the separate `filecoin_` namespace.
+- Root HTTP transport using generic Foundry `anvil-server`/`anvil-rpc` plumbing.
+- HTTP/WebSocket `/rpc/v1`, Lotus wire projections and Go channel framing.
+- Standard Ethereum responses, native `Filecoin.*` PDP methods, and separate `filecoin_` diagnostics.
 
-It never decodes a raw Ethereum transaction, derives canonical receipts, owns a pool, accesses FVM
-state, or sends JSON values to the node worker.
+It never validates transaction admission, converts submitted Ethereum envelopes into Filecoin
+messages, derives canonical execution results, owns a pool, accesses FVM state, or sends JSON
+values to the worker. Response projection can decode a preserved envelope solely to assemble its
+Ethereum wire representation.
 
 The matching Foundry transport crates are pinned to one exact Git revision and used with
 `anvil-server` default features disabled until IPC is implemented. No production manifest uses a
@@ -147,6 +161,7 @@ Current semantic operations are:
 - Automine control.
 - Filecoin gas breakdown, call trace, and state-root queries.
 - Current-root balance, nonce, EVM bytecode, and EVM storage mutation.
+- Native tipset/history selection, raw beacon digest queries, and head-change subscription.
 
 `NodeError` retains stable semantic categories; only the RPC crate maps them to JSON-RPC errors.
 
@@ -173,7 +188,7 @@ Runtime mining controls must have one timer owner. A call that changes automine 
 must take ownership away from the startup scheduler; snapshot/revert must not restore process-control
 state.
 
-### ERC-20 state controls
+### General ERC-20 layout support
 
 The shared builtin-actors v18 adapter serves Press patches and live code, storage, ERC-20 balance,
 and ERC-20 allowance mutations. Direct mutations publish a new current FVM root, participate in
@@ -186,6 +201,9 @@ result equals the requested value. Only the validated slot is committed. Nonstan
 layouts remain unsupported and fail without publishing a candidate root; storage-access tracing
 would be required for general layout discovery.
 
+The standard-layout helpers above are implemented. Only broader nonstandard layout discovery
+remains future work; the existing methods are not awaiting implementation.
+
 Local `--actor-bundle` inputs remain a genesis-time development choice. The user is responsible for
 selecting a bundle compatible with the v18 state adapter.
 
@@ -197,10 +215,12 @@ publication must not be accepted.
 
 ### Deferred work
 
-- WebSocket subscriptions and optional IPC.
+- Ethereum subscriptions (`eth_subscribe`) and optional IPC.
 - Broader Anvil extensions where FEVM can provide honest semantics.
 - General remote-chain forking.
 - New imported-actor synthesis and workload-specific state witnesses.
+- Native miner, PoRep/PoSt, consensus, and general Lotus API behavior are outside the
+  implemented PDP scope, not prerequisites for the completed Curio workflow.
 
 ## Completion evidence
 
@@ -208,3 +228,7 @@ For runtime and RPC changes, exercise the real binary and changed public endpoin
 focused tests. `tests/acceptance/run.sh` remains the end-to-end compatibility gate for deployment,
 transaction, event, receipt, block, gas, and snapshot behavior. Run workspace formatting, strict
 Clippy, and tests only after the endpoint smoke test succeeds.
+
+For Curio/PDP changes, run the separate writable workflow in
+[`tests/curio/README.md`](../tests/curio/README.md): a ping or contract view alone does not
+exercise ingestion, raw beacon agreement, proof caching, or successful proof submission.

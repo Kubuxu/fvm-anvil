@@ -250,12 +250,12 @@ if [[ "$FILECOIN_ASSERTIONS" == "1" ]]; then
         fail "gas breakdown baseFeeBurn must be nonzero"
 fi
 
-transaction="$(cast tx "$mutation_hash" --json --rpc-url "$RPC_URL")"
+transaction="$(cast rpc eth_getTransactionByHash "$mutation_hash" --rpc-url "$RPC_URL")"
 assert_eq "$(json_field "$transaction" '.hash')" "$mutation_hash" "indexed transaction"
 assert_eq "$(json_field "$transaction" '.blockHash')" "$mutation_block_hash" \
     "transaction block hash"
 
-block="$(cast block "$mutation_block_number" --json --rpc-url "$RPC_URL")"
+block="$(cast rpc eth_getBlockByNumber "$mutation_block_number" false --rpc-url "$RPC_URL")"
 assert_eq "$(json_field "$block" '.hash')" "$mutation_block_hash" "indexed block"
 assert_eq "$(cast call "$contract_address" 'value()(uint256)' --rpc-url "$RPC_URL")" \
     "$UPDATED_VALUE" "mutated state"

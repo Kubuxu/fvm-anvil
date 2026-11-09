@@ -32,6 +32,7 @@ use crate::config::NodeConfig;
 use crate::error::NodeError;
 use crate::externs::DeterministicExterns;
 use crate::genesis::{GenesisOutput, PrefundedAccount, create_genesis, fund_development_accounts};
+use crate::native::{HeadChange, NativeTipset, array_root, project_tipset};
 use crate::storage::RuntimeBlockstore;
 use crate::types::{
     Block, BlockSelector, CallRequest, FilecoinCallTrace, FilecoinGasBreakdown, FilecoinGasCharge,
@@ -61,6 +62,8 @@ struct PendingTransaction {
 struct CanonicalBlock {
     block: Block,
     root: Cid,
+    native: NativeTipset,
+    receipts_root: Cid,
 }
 
 #[derive(Clone)]
@@ -172,6 +175,8 @@ pub(crate) struct NodeRuntime {
     next_timestamp: u64,
     snapshots: HashMap<U256, SnapshotState>,
     next_snapshot_id: u64,
+    externs: DeterministicExterns,
+    subscribers: Vec<tokio::sync::mpsc::Sender<Vec<HeadChange>>>,
 }
 
 impl NodeRuntime {
@@ -268,6 +273,21 @@ impl NodeRuntime {
         };
         let mut block_numbers_by_hash = HashMap::new();
         block_numbers_by_hash.insert(initial_hash, initial.block_number);
+        let empty_messages = array_root(store.as_ref(), std::iter::empty::<Cid>(), 3)?;
+        let empty_receipts = array_root(store.as_ref(), std::iter::empty::<Cid>(), 3)?;
+        let messages = store
+            .put_cbor(&(empty_messages, empty_messages), Code::Blake2b256)
+            .map_err(|error| NodeError::Runtime(error.to_string()))?;
+        let native = project_tipset(
+            store.as_ref(),
+            &initial_block,
+            None,
+            initial.current_root,
+            empty_receipts,
+            messages,
+        )?;
+        let externs = DeterministicExterns::default();
+        externs.tipsets.borrow_mut().insert(initial.epoch, native.key_cid);
 
         let runtime = Self {
             store,
@@ -280,7 +300,12 @@ impl NodeRuntime {
             genesis_block_number: initial.block_number,
             block_gas_limit: config.block_gas_limit(),
             base_fee_per_gas: initial.base_fee_per_gas,
-            blocks: vec![CanonicalBlock { block: initial_block, root: initial.current_root }],
+            blocks: vec![CanonicalBlock {
+                block: initial_block,
+                root: initial.current_root,
+                native,
+                receipts_root: empty_receipts,
+            }],
             block_numbers_by_hash,
             transactions: HashMap::new(),
             receipts: HashMap::new(),
@@ -293,6 +318,8 @@ impl NodeRuntime {
             next_timestamp,
             snapshots: HashMap::new(),
             next_snapshot_id: 1,
+            externs,
+            subscribers: Vec::new(),
         };
         drop(runtime.new_executor_at(
             initial.current_root,
@@ -305,6 +332,59 @@ impl NodeRuntime {
 
     pub(crate) fn chain_id(&self) -> u64 {
         self.network.chain_id.into()
+    }
+
+    pub(crate) fn native_tipset(&self, key: &[Cid]) -> Result<NativeTipset, NodeError> {
+        let record = if key.is_empty() {
+            self.blocks.last()
+        } else if key.len() == 1 {
+            self.blocks.iter().find(|record| record.native.cid == key[0])
+        } else {
+            None
+        };
+        record
+            .map(|record| record.native.clone())
+            .ok_or_else(|| NodeError::UnknownTipset(format!("{key:?}")))
+    }
+
+    pub(crate) fn native_tipset_by_height(
+        &self,
+        height: i64,
+        key: &[Cid],
+    ) -> Result<NativeTipset, NodeError> {
+        let anchor = self.native_tipset(key)?;
+        if height < 0 || height > anchor.height {
+            return Err(NodeError::UnknownTipset(format!(
+                "height {height} above anchor or negative"
+            )));
+        }
+        self.canonical_record(height as u64).map(|record| record.native.clone()).ok_or_else(|| {
+            NodeError::UnknownTipset(format!("height {height} is not available locally"))
+        })
+    }
+
+    pub(crate) fn beacon_digest(&self, epoch: i64, key: &[Cid]) -> Result<[u8; 32], NodeError> {
+        let anchor = self.native_tipset(key)?;
+        let minimum = self.genesis_block_number as i64;
+        if epoch < minimum || epoch > anchor.height {
+            return Err(NodeError::RandomnessEpoch { epoch, minimum, maximum: anchor.height });
+        }
+        Ok(DeterministicExterns::beacon_digest(epoch))
+    }
+
+    pub(crate) fn subscribe_heads(&mut self) -> tokio::sync::mpsc::Receiver<Vec<HeadChange>> {
+        let (sender, receiver) = tokio::sync::mpsc::channel(64);
+        // Registration and the initial head are serialized with commits on this worker.
+        let _ = sender.try_send(vec![HeadChange::Current(
+            self.blocks.last().expect("genesis exists").native.clone(),
+        )]);
+        self.subscribers.retain(|subscriber| !subscriber.is_closed());
+        self.subscribers.push(sender);
+        receiver
+    }
+
+    fn publish_head_changes(&mut self, changes: Vec<HeadChange>) {
+        self.subscribers.retain(|subscriber| subscriber.try_send(changes.clone()).is_ok());
     }
 
     pub(crate) fn actor_bundle_root(&self) -> Cid {
@@ -332,10 +412,26 @@ impl NodeRuntime {
         let hash = bridged.tx_hash();
         self.validate_pool_admission(&bridged)?;
         let transaction = public_transaction(&bridged);
-        self.pool.push_back(PendingTransaction { bridged, transaction });
+        let replacement = self.replacement_index(&bridged);
+        let previous = if let Some(index) = replacement {
+            Some(std::mem::replace(
+                &mut self.pool[index],
+                PendingTransaction { bridged, transaction },
+            ))
+        } else {
+            self.pool.push_back(PendingTransaction { bridged, transaction });
+            None
+        };
 
-        if self.automine {
-            self.commit_blocks(1, None, None)?;
+        if self.automine
+            && let Err(error) = self.commit_blocks(1, None, None)
+        {
+            if let Some(previous) = previous {
+                self.pool[replacement.expect("replacement has previous entry")] = previous;
+            } else {
+                self.pool.pop_back();
+            }
+            return Err(error);
         }
         Ok(hash)
     }
@@ -713,6 +809,13 @@ impl NodeRuntime {
         let Some(snapshot) = self.snapshots.remove(&id) else {
             return false;
         };
+        let mut changes: Vec<_> = self
+            .blocks
+            .iter()
+            .skip(snapshot.blocks.len())
+            .rev()
+            .map(|record| HeadChange::Revert(record.native.clone()))
+            .collect();
         let current_pool = std::mem::take(&mut self.pool);
         self.current_root = snapshot.current_root;
         self.blocks = snapshot.blocks;
@@ -729,6 +832,10 @@ impl NodeRuntime {
             }
         }
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+        let restored_height = self.block_number() as i64;
+        self.externs.tipsets.borrow_mut().retain(|height, _| *height <= restored_height);
+        changes.push(HeadChange::Apply(self.blocks.last().expect("genesis exists").native.clone()));
+        self.publish_head_changes(changes);
         true
     }
 
@@ -738,6 +845,13 @@ impl NodeRuntime {
 
     pub(crate) fn filecoin_gas_trace(&self, hash: B256) -> Option<FilecoinGasTrace> {
         self.gas_traces.get(&hash).cloned()
+    }
+
+    fn replacement_index(&self, transaction: &BridgedTransaction) -> Option<usize> {
+        self.pool.iter().position(|pending| {
+            pending.bridged.sender() == transaction.sender()
+                && pending.bridged.nonce() == transaction.nonce()
+        })
     }
 
     fn validate_pool_admission(&self, transaction: &BridgedTransaction) -> Result<(), NodeError> {
@@ -754,11 +868,29 @@ impl NodeRuntime {
                 maximum: self.block_gas_limit,
             });
         }
+        let replacement = self.replacement_index(transaction);
+        if let Some(index) = replacement {
+            let previous = &self.pool[index].bridged;
+            if !replacement_fee_sufficient(
+                previous.max_fee_per_gas(),
+                transaction.max_fee_per_gas(),
+            ) || !replacement_fee_sufficient(
+                previous.max_priority_fee_per_gas(),
+                transaction.max_priority_fee_per_gas(),
+            ) {
+                return Err(NodeError::ReplacementUnderpriced);
+            }
+        }
         let pending_gas = self
             .pool
             .iter()
-            .fold(0_u64, |total, pending| total.saturating_add(pending.bridged.gas_limit()));
-        let total_gas = pending_gas.saturating_add(transaction.gas_limit());
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != replacement)
+            .try_fold(0_u64, |total, (_, pending)| total.checked_add(pending.bridged.gas_limit()))
+            .ok_or(NodeError::ReservationOverflow)?;
+        let total_gas = pending_gas
+            .checked_add(transaction.gas_limit())
+            .ok_or(NodeError::ReservationOverflow)?;
         if total_gas > self.block_gas_limit {
             return Err(NodeError::PendingBlockGasLimit {
                 actual: total_gas,
@@ -778,7 +910,10 @@ impl NodeRuntime {
             });
         }
 
-        let expected_nonce = self.next_pool_nonce(transaction.sender())?;
+        let expected_nonce = replacement.map_or_else(
+            || self.next_pool_nonce(transaction.sender()),
+            |_| Ok(transaction.nonce()),
+        )?;
         if transaction.nonce() < expected_nonce {
             return Err(NodeError::StaleNonce {
                 expected: expected_nonce,
@@ -796,11 +931,17 @@ impl NodeRuntime {
         let reserved = self
             .pool
             .iter()
-            .filter(|pending| pending.bridged.sender() == transaction.sender())
-            .fold(U256::ZERO, |total, pending| {
-                total.saturating_add(maximum_transaction_cost(&pending.bridged))
-            });
-        let required = reserved.saturating_add(maximum_transaction_cost(transaction));
+            .enumerate()
+            .filter(|(index, pending)| {
+                Some(*index) != replacement && pending.bridged.sender() == transaction.sender()
+            })
+            .try_fold(U256::ZERO, |total, (_, pending)| {
+                maximum_transaction_cost(&pending.bridged).and_then(|cost| total.checked_add(cost))
+            })
+            .ok_or(NodeError::ReservationOverflow)?;
+        let required = maximum_transaction_cost(transaction)
+            .and_then(|cost| reserved.checked_add(cost))
+            .ok_or(NodeError::ReservationOverflow)?;
         if required > balance {
             return Err(NodeError::InsufficientFunds {
                 address: transaction.sender(),
@@ -1082,7 +1223,7 @@ impl NodeRuntime {
             transactions: transactions.clone(),
             logs: block_logs,
         };
-        records.push(CanonicalBlock { block: first_block, root });
+        records.push((first_block, root));
 
         let mut parent_hash = block_hash;
         for offset in 1..count {
@@ -1103,13 +1244,60 @@ impl NodeRuntime {
                 transactions: Vec::new(),
                 logs: Vec::new(),
             };
-            records.push(CanonicalBlock { block, root });
+            records.push((block, root));
             parent_hash = hash;
         }
+
+        let empty_messages = array_root(self.store.as_ref(), std::iter::empty::<Cid>(), 3)?;
+        let empty_receipts = array_root(self.store.as_ref(), std::iter::empty::<Cid>(), 3)?;
+        let signed_cids: Vec<_> = self
+            .pool
+            .iter()
+            .map(|pending| {
+                self.store
+                    .put_cbor(pending.bridged.signed_message(), Code::Blake2b256)
+                    .map_err(|error| NodeError::Runtime(error.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+        let signed_root = array_root(self.store.as_ref(), signed_cids, 3)?;
+        let messages = self
+            .store
+            .put_cbor(&(empty_messages, signed_root), Code::Blake2b256)
+            .map_err(|error| NodeError::Runtime(error.to_string()))?;
+        let empty_meta = self
+            .store
+            .put_cbor(&(empty_messages, empty_messages), Code::Blake2b256)
+            .map_err(|error| NodeError::Runtime(error.to_string()))?;
+        let receipts_root = array_root(
+            self.store.as_ref(),
+            applications.into_iter().map(|apply| apply.msg_receipt),
+            3,
+        )?;
+        let mut native_records = Vec::with_capacity(records.len());
+        for (index, (block, root)) in records.into_iter().enumerate() {
+            let parent =
+                native_records.last().or_else(|| self.blocks.last()).expect("genesis exists");
+            let native = project_tipset(
+                self.store.as_ref(),
+                &block,
+                Some(&parent.native),
+                if index == 0 { self.current_root } else { parent.root },
+                parent.receipts_root,
+                if index == 0 { messages } else { empty_meta },
+            )?;
+            native_records.push(CanonicalBlock {
+                block,
+                root,
+                native,
+                receipts_root: if index == 0 { receipts_root } else { empty_receipts },
+            });
+        }
+        let records = native_records;
 
         self.current_root = root;
         for record in &records {
             self.block_numbers_by_hash.insert(record.block.hash, record.block.number);
+            self.externs.tipsets.borrow_mut().insert(record.native.height, record.native.key_cid);
         }
         for (((transaction, receipt), gas), trace) in
             transactions.into_iter().zip(receipts).zip(gas_breakdowns).zip(gas_traces)
@@ -1127,6 +1315,15 @@ impl NodeRuntime {
         self.blocks.extend(records);
         self.next_epoch = next_epoch;
         self.next_timestamp = schedule.next_timestamp;
+        let changes = self
+            .blocks
+            .iter()
+            .rev()
+            .take(capacity)
+            .rev()
+            .map(|record| HeadChange::Apply(record.native.clone()))
+            .collect();
+        self.publish_head_changes(changes);
         Ok(blocks)
     }
 
@@ -1385,7 +1582,7 @@ impl NodeRuntime {
         if tracing {
             context.enable_tracing();
         }
-        let machine = DefaultMachine::new(&context, Rc::clone(&self.store), DeterministicExterns)
+        let machine = DefaultMachine::new(&context, Rc::clone(&self.store), self.externs.clone())
             .map_err(|error| NodeError::Runtime(error.to_string()))?;
         DefaultExecutor::new(self.engine_pool.clone(), machine)
             .map_err(|error| NodeError::Runtime(error.to_string()))
@@ -1498,10 +1695,13 @@ fn validate_signed_message_size(serialized_len: usize) -> Result<(), NodeError> 
     Ok(())
 }
 
-fn maximum_transaction_cost(transaction: &BridgedTransaction) -> U256 {
-    let gas_cost = U256::from(transaction.gas_limit())
-        .saturating_mul(U256::from(transaction.max_fee_per_gas()));
-    transaction.value().saturating_add(gas_cost)
+fn maximum_transaction_cost(transaction: &BridgedTransaction) -> Option<U256> {
+    let gas_cost = U256::from(transaction.gas_limit()) * U256::from(transaction.max_fee_per_gas());
+    transaction.value().checked_add(gas_cost)
+}
+
+fn replacement_fee_sufficient(previous: u128, replacement: u128) -> bool {
+    previous.checked_add(previous.div_ceil(10).max(1)).is_some_and(|minimum| replacement >= minimum)
 }
 
 fn filecoin_gas_breakdown(apply: &ApplyRet) -> Result<FilecoinGasBreakdown, NodeError> {
@@ -1743,6 +1943,17 @@ mod tests {
     };
     use crate::error::NodeError;
     use crate::types::{Log, LogFilter};
+
+    #[test]
+    fn replacement_fee_bump_rounds_up_without_overflow() {
+        assert!(!super::replacement_fee_sufficient(100, 109));
+        assert!(super::replacement_fee_sufficient(100, 110));
+        assert!(!super::replacement_fee_sufficient(101, 111));
+        assert!(super::replacement_fee_sufficient(101, 112));
+        assert!(!super::replacement_fee_sufficient(0, 0));
+        assert!(super::replacement_fee_sufficient(0, 1));
+        assert!(!super::replacement_fee_sufficient(u128::MAX, u128::MAX));
+    }
 
     #[test]
     fn signed_message_size_limit_matches_forest() {

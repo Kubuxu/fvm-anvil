@@ -2,7 +2,9 @@
 //!
 //! RPC handlers communicate with the node exclusively through its semantic handle.
 
+mod native;
 mod response;
+mod transport;
 mod wire;
 
 use alloy_primitives::U256;
@@ -17,6 +19,7 @@ use fvm_anvil_node::{BlockSelector, LogFilter, NodeError, NodeHandle};
 use serde_json::{Value, json};
 
 pub use anvil_server::{ServerConfig, http_router};
+pub use transport::rpc_router;
 pub use wire::{
     AccessListItem, AddressBlockParams, AnvilBytes, AnvilMineParams, AnvilQuantity, BlockParams,
     CallParams, EvmMineParams, FeeHistoryParams, Four, HashBlockParams, LogFilterParams, One,
@@ -360,6 +363,12 @@ impl RpcHandler for RpcService {
 
     async fn on_call(&self, call: RpcMethodCall) -> RpcResponse {
         let RpcMethodCall { method, params, id, .. } = call;
+        if method.starts_with("Filecoin.") {
+            return RpcResponse::new(
+                id,
+                native::dispatch(&self.node, &method, Value::from(params)).await,
+            );
+        }
         let response = match parse_request(&method, params) {
             Ok(request) => self.on_request(request).await,
             Err(error) => ResponseResult::error(error),
@@ -515,6 +524,8 @@ fn transaction_error(error: NodeError) -> ResponseResult {
         | NodeError::DuplicateTransaction(_)
         | NodeError::StaleNonce { .. }
         | NodeError::FutureNonce { .. }
+        | NodeError::ReplacementUnderpriced
+        | NodeError::ReservationOverflow
         | NodeError::FeeCapTooLow { .. }
         | NodeError::PriorityFeeAboveCap { .. }
         | NodeError::InvalidGasLimit { .. }
@@ -1098,11 +1109,26 @@ mod tests {
         let hashes = response::block(block.clone(), false).unwrap();
         assert_eq!(hashes["transactions"], json!([hash]));
         assert_eq!(hashes["logsBloom"], json!(expected_bloom));
+        let decoded =
+            <alloy_consensus::TxEnvelope as alloy_eips::eip2718::Decodable2718>::decode_2718_exact(
+                CREATION,
+            )
+            .unwrap();
+        let expected_root = alloy_consensus::proofs::calculate_transaction_root(&[decoded]);
+        assert_eq!(hashes["transactionsRoot"], json!(expected_root));
+        let mut empty = block.clone();
+        empty.transactions.clear();
+        let empty = response::block(empty, true).unwrap();
+        assert_eq!(
+            empty["transactionsRoot"],
+            json!(b256!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"))
+        );
         let full = response::block(block, true).unwrap();
         assert_eq!(full["transactions"][0]["hash"], json!(hash));
         assert_eq!(full["transactions"][0]["blockHash"], json!(block_hash));
         assert_eq!(full["transactions"][0]["transactionIndex"], "0x0");
         assert_eq!(full["logsBloom"], json!(expected_bloom));
+        assert_eq!(full["transactionsRoot"], json!(expected_root));
     }
 
     #[test]
