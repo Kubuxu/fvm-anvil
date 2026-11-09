@@ -9,6 +9,14 @@ Run commands from the repository root. Use a disposable node: the final Go clien
 checks mining and snapshot/revert behavior after stopping Skiff. Do not point this
 recipe at a shared chain or a public network.
 
+Choose a reader path:
+
+- [First setup: steps 1–5](#1-install-prerequisites-and-select-sources).
+- [Direct native RPC use](#use-the-native-rpc-capability-directly).
+- [Resume the same live deployment](#continue-serving-after-acceptance).
+- [Stop, reset, and rerun](#stop-inspect-and-run-again).
+
+
 ## 1. Install prerequisites and select sources
 
 Required tools:
@@ -228,7 +236,7 @@ and the PostgreSQL/ScyllaDB connection settings automatically. These exports alo
 not replace writable DB, storage, signer, and provider/payment setup.
 
 `Filecoin.ChainNotify` uses Go `go-jsonrpc` WebSocket channels, not `eth_subscribe`.
-See the [implemented API contracts](../../docs/curio-compatibility-plan.md#implemented-api-boundary).
+See the [implemented API contracts](../../docs/curio-pdp-compatibility.md#implemented-api-boundary).
 Native miners, PoRep/PoSt, general Lotus wallet/object methods, and Ethereum subscriptions
 remain unsupported. The [gas benchmark](../../benchmarks/fwss/README.md) is a separate
 imported-state experiment, not this fresh deployment workflow.
@@ -285,8 +293,7 @@ before using the same CQL host port; their volumes are not reused by ScyllaDB.
 
 ## Verified result
 
-On 2026-11-09, the pinned stack completed dataset creation, a 64 MiB upload/add, and a
-successful real proof with PostgreSQL 16.6 and ScyllaDB 6.2.3. It retained 32 proof-cache
-layer rows and produced no advertisements. Detailed revisions, hashes, and exercised
-checks are in the [implementation record](../../docs/curio-compatibility-plan.md#exercised-verification).
-This is evidence for the pinned stack, not a guarantee for arbitrary future checkouts.
+The pinned stack completed creation/add/proving on 2026-11-09. Tested revisions and
+dated verification evidence are in the
+[compatibility record](../../docs/curio-pdp-compatibility.md#exercised-verification);
+they are not a guarantee for arbitrary future checkouts.

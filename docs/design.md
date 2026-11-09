@@ -3,8 +3,7 @@
 Status: living design record  
 Last updated: 2026-11-09
 
-Current implementation status and remaining work are tracked in
-[`docs/implementation-plan.md`](implementation-plan.md).
+Remaining work and completion guidance are tracked in [`roadmap.md`](roadmap.md).
 
 ## Purpose
 
@@ -86,7 +85,7 @@ A dedicated worker thread with a 64 MiB stack owns all mutable execution state:
 - IPLD blockstore.
 - Current FVM state root.
 - Epoch, timestamp, base fee, and deterministic externs.
-- Synthetic blocks and historical state roots.
+- Synthetic blocks, native headers/tipset-key CIDs, historical roots, and bounded head subscriptions.
 - Transactions, receipts, logs, and gas traces.
 - Transaction pool.
 - Mining mode.
@@ -95,6 +94,14 @@ A dedicated worker thread with a 64 MiB stack owns all mutable execution state:
 Async RPC handlers communicate with this worker through semantic commands. RPC parsing must not leak into the execution layer.
 
 Each produced block constructs a `DefaultMachine` from the current root and block context, executes selected messages sequentially through `DefaultExecutor`, records each `ApplyRet`, flushes once, and stores the resulting root with the synthetic block metadata. `EnginePool` is reused across machines.
+
+Canonical execution publishes its root, synthetic block, and transaction/receipt/log/gas
+indexes atomically. Fatal machine/executor errors leave the adopted root and indexes unchanged;
+normal actor exit failures produce committed failed receipts. Direct state controls publish
+validated current roots without mining, as described in the RPC section below.
+
+Machines and executors are ephemeral; the engine pool and shared blockstore are reused.
+Clone the shared store handle, not its backing in-memory map: copying that map would fork state.
 
 Startup eagerly compiles only the EAM, EthAccount, EVM, and placeholder actors used by the Ethereum
 transaction path. Other bundle actors compile lazily if a future feature invokes them; compiling
@@ -132,6 +139,26 @@ Dependency rules:
 - `fvm-anvil-state` owns the on-disk prepared-state and ForestCAR boundary plus the versioned
   builtin-actors state adapters shared by `press` and the node. It does not own a live root.
 - No production crate depends on Forest, `anvil-core`, or the main `anvil` crate.
+
+### Ownership and command contracts
+
+`fvm-anvil-node` exposes a cloneable typed asynchronous `NodeHandle`; the bounded command
+enum and live runtime remain worker-local. Node DTOs may use stable primitives, but not
+Alloy RPC response types or JSON/serde wire contracts. `NodeError` keeps semantic categories;
+only the RPC boundary maps them to JSON-RPC errors. RPC and bridge code maintain no competing
+canonical chain or result caches.
+
+`fvm-anvil-rpc` owns wire parsing, parameter/quantity validation, response projection, transport,
+and channel framing. It does not validate pool admission, convert submitted envelopes into FVM
+messages, or derive canonical execution results. It may decode a preserved Ethereum envelope
+solely to assemble its response. `fvm-anvil-eth` owns deterministic protocol conversion and
+must not access a state root, pool, clock, blockstore, or worker.
+
+The binary owns configuration precedence, development-wallet keys, startup/shutdown, and the
+interval scheduler. Protocol types live in the lowest crate owning their invariants. The shared
+state crate owns persisted formats and versioned v18 adapters, never a live root; official Wasm
+and code CIDs come from the selected actor bundle, not production dependencies on actor crates.
+
 
 ### Reuse directly
 
@@ -372,20 +399,13 @@ honestly change contract-visible behavior must remain unsupported.
 
 ## Remaining compatibility work
 
-The current roadmap is maintained in [`docs/implementation-plan.md`](implementation-plan.md).
-Priorities include time controls, pool ordering and inspection, and writable-overlay
-persistence. ERC-20 balance/allowance helpers are implemented for standard Solidity mapping
-layouts using validated ephemeral state overrides. General nonstandard layout discovery
-remains unsupported; it would require additional storage-access tracing or equivalent evidence.
+Unimplemented controls, persistence, and deferred extensions are tracked only in the
+[roadmap](roadmap.md); the RPC list above records current support.
 
-`anvil_dumpState`, `anvil_loadState`, and `anvil_reset` also remain unsupported. Foundry's dump is a
-gzip-compressed serialization of its Ethereum database and block environment, not an FVM state
-format; fvm-anvil persistence must retain the writable IPLD overlay and adopted FVM root instead of
-claiming wire compatibility with that blob.
-
-Ethereum subscriptions (`eth_subscribe`), IPC, broader Anvil extensions, and general remote-chain
-forking remain deferred. State preparation with selected mainnet actors is provided by
-[`press`](press.md), but it is not consensus-history import or remote RPC forking.
+`anvil_dumpState`, `anvil_loadState`, and `anvil_reset` remain unsupported. Foundry's dump
+serializes an Ethereum database, not an FVM state format; an FVM persistence feature must not
+claim compatibility with that blob. Prepared-state [import](press.md) does not provide
+consensus history, writable-overlay persistence, or general remote-chain forking.
 
 ## Acceptance runner
 

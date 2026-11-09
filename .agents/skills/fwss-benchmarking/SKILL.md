@@ -18,7 +18,7 @@ Read before running:
 
 - `benchmarks/fwss/README.md` for commands;
 - `benchmarks/fwss/suite.json` for the active archive, builds, variants, and cases;
-- relevant sections of `benchmarks/fwss/design.md` when fixture chronology, result identity, or boundary semantics matter.
+- relevant sections of `benchmarks/fwss/methodology.md` when fixture chronology, result identity, or boundary semantics matter.
 
 ## Establish the experiment
 

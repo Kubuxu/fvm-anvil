@@ -1,54 +1,54 @@
 # Press state preparation
 
 Status: active  
-Last updated: 2026-08-05
+Last updated: 2026-11-09
 
-`press build` resolves recipe addresses, preserves actor IDs and source Init aliases, rebuilds a V5
-state tree, applies builtin-actors v18 EVM runtime-code and storage changes, writes indexed
-ForestCAR, and reopens the result for structural validation. Passing `--verify` additionally reads
-every reachable block back through the completed archive's index.
+`press` turns a large Filecoin state snapshot into a smaller, independent archive for a specific
+`fvm-anvil` experiment. Select contracts and dependencies in a recipe, optionally patch their code
+or state, then execute transactions against the imported deployment with local development callers
+and FVM gas diagnostics.
 
-`fvm-anvil --state <PRESS_ARCHIVE>` mounts the output as a read-only base, validates its NV28/v18
-execution context, and funds development callers in a writable in-memory overlay.
+## Build, inspect, and run
 
-## Purpose
+From the repository root, build the tools and prepare an archive:
 
-`press` is an offline tool for turning a large Filecoin state snapshot into a smaller state snapshot
-for a specific `fvm-anvil` experiment. It reads the source snapshot without loading it wholesale,
-selects actors, applies explicit state modifications, builds a new FVM state tree, and writes the
-result in Forest's indexed compressed CAR format.
+```bash
+cargo build --release -p press -p fvm-anvil
 
-The primary workflow is:
-
-```text
-Filecoin mainnet snapshot
-    -> press selects contracts and dependencies
-    -> press copies their complete actor state
-    -> press applies code and storage patches
-    -> press writes a smaller ForestCAR-backed state snapshot
-    -> fvm-anvil adds development callers and funding
-    -> fvm-anvil executes transactions and reports results and FVM gas
+target/release/press inspect snapshots/SOURCE.forest.car.zst
+target/release/press build \
+  --snapshot snapshots/SOURCE.forest.car.zst \
+  --recipe recipes/RECIPE.json \
+  --output snapshots/OUTPUT.press.car.zst
+target/release/press inspect snapshots/OUTPUT.press.car.zst
 ```
 
-The output no longer depends on the source snapshot. It still uses the actor bundle selected by
-`fvm-anvil`, as ordinary Forest snapshots do.
+Supply an existing source ForestCAR and recipe; the filenames above are placeholders. Builds accept
+`--network-version 28`, `--force` to replace an output, and `--verify` for the additional audit
+described [below](#validation-and-runtime-loading). Progress goes to stderr; the final build summary
+goes to stdout.
 
-## Scope decisions
+Start the foreground node in **terminal A**:
 
-The implementation follows these decisions:
+```bash
+target/release/fvm-anvil --state snapshots/OUTPUT.press.car.zst --port 18546
+```
 
-- Recipes describe reusable actor selections and transformations. They do not pin an expected input
-  state root or snapshot CID.
-- Output provenance records the source head and state root actually used, without making them recipe
-  preconditions.
-- The workflow copies selected state into a new snapshot. Copy-on-write overlays and
-  workload-specific read witnesses are not implemented.
-- `press` does not create or fund development callers. `fvm-anvil` applies those local changes after
-  opening the prepared state.
-- Selected actors are copied with their complete internal state by default. Selective or observed
-  storage pruning is deferred because omitted storage changes contract behavior.
-- Actor dependencies are explicit. `press` does not claim to infer the complete dynamic EVM call
-  graph.
+Use **terminal B** for RPC calls or a workload runner:
+
+```bash
+cast block-number --rpc-url http://127.0.0.1:18546
+```
+
+The node mounts the archive read-only and funds development callers in an in-memory overlay.
+The output no longer depends on the source snapshot, but still needs the actor bundle selected by
+`fvm-anvil`. Restarting discards local changes and returns to the prepared state.
+
+For source pinning, dependency selection, proxy patches, and public runtime proofs, follow the
+[recipe runbook](press-recipes.md), including its
+[mainnet PDPVerifier v3.4.0 example](press-recipes.md#pdpverifier-mainnet-v340).
+[Historical PDPVerifier benchmark reports](../benchmarks/pdp-verifier/README.md) live beside their
+runners.
 
 ## Snapshot format
 
@@ -79,28 +79,12 @@ PreparedStateMetadata (format version 2)
 The container is ForestCAR-compatible for indexed block access, but the output is intended as an FVM
 state snapshot for `fvm-anvil`, not as a chain head for Forest synchronization.
 
-## Recipe and command model
+## Recipe schema
 
-The source snapshot is an invocation input so the same recipe can be rerun against newer state:
-
-```text
-press inspect SNAPSHOT
-press build --snapshot SNAPSHOT --recipe RECIPE --output OUTPUT
-  [--network-version 28] [--force] [--verify]
-press inspect OUTPUT
-```
-
-Every build reopens the completed archive and validates its metadata, compact state tree, actor
-records, requested aliases, patches, and manifest linkage before atomic publication. `--verify`
-additionally traverses every reachable actor-state block through the generated ForestCAR index. That
-full readback audit is useful for distributed artifacts but is disabled by default because the
-build's export traversal has already read and copied the complete selected DAG.
-
-The reusable source-pinning, dependency-discovery, proxy-patch, and runtime-proof workflow is
-recorded in [`press-recipes.md`](press-recipes.md).
-
-Recipe version 1 selects actors by stable user-facing addresses and optionally applies explicit
-transformations:
+The source snapshot is an invocation input, so the same recipe can be rerun against newer state.
+Recipes do not pin an expected input root or snapshot CID; output provenance records the actual
+source head and state root. Recipe version 1 selects actors by stable user-facing addresses and
+optionally applies explicit transformations:
 
 ```json
 {
@@ -195,78 +179,34 @@ nonce, transient data, and tombstone. Storage patches use the v18 minimal-big-en
 and KAMT configuration, delete zero values, apply all requested slots, and flush once. Actor balance
 and sequence changes update the outer `ActorState`.
 
-Structural verification reloads the completed archive, checks final actor records, recomputes
-replacement bytecode hashes, and reads every patched storage slot back from the emitted KAMT. All
-changes are committed into the new outer state root before publication.
+All changes are committed into the new outer state root before publication.
 
-Press does not synthesize a new EVM contract at an address that is absent from the source. That
-requires separate EAM and actor-invariant work and is not needed for replacing code on an imported
-contract.
 
-## Responsibility split
+## Validation and runtime loading
 
-### `press`
+Every build reopens the completed archive and validates its metadata, compact state tree, final
+actor records, requested aliases, patches, and manifest linkage before atomic publication. Patch
+validation recomputes replacement bytecode hashes and reads every patched storage slot back from
+the emitted KAMT. `--verify` additionally traverses every reachable actor-state block through the
+generated ForestCAR index. This full readback audit is useful for distributed artifacts but is
+disabled by default: the export traversal has already read and copied the complete selected DAG.
 
-`press` owns deterministic offline preparation:
+Actor-bundle compatibility is not a Press build gate. Missing source code blocks and the System
+manifest data remain explicit external bundle dependencies; `fvm-anvil` loads its configured bundle
+and validates the prepared NV28/v18 execution context when constructing the ref-FVM machine.
 
-- indexed source snapshot access;
-- source context and actor inspection;
-- actor selection;
-- Init map reconstruction;
-- versioned EVM state transformations;
-- custom state-tree construction;
-- streaming ForestCAR output;
-- output provenance.
+Node startup uses the same bounded structural validation as a default build, rather than reading
+an imported actor's full storage. An archive missing an unpatched actor-state block therefore fails
+when that block is first accessed.
 
-A successful build reopens the completed archive and validates metadata, actor records, requested
-addresses, patches, and manifest linkage before publication. With `--verify`, it also traverses every
-reachable actor-state block through the completed archive's index. Actor-bundle compatibility is not
-a `press` build gate.
+The root stored by Press is the prepared imported root. Adding development accounts derives a
+writable current root; `filecoin_getStateRoots` reports both. The current root advances after adopted
+transactions, while the prepared root remains fixed.
 
-### `fvm-anvil`
-
-`fvm-anvil` owns local runtime behavior:
-
-- loading the configured actor bundle;
-- validating what it needs to construct the ref-FVM machine;
-- opening the prepared state root and execution context;
-- adding and funding generated development callers through the imported Init state;
-- maintaining the writable execution overlay;
-- mining, snapshots, reverts, RPC indexes, and gas diagnostics.
-
-Node startup uses the same bounded validation as a default Press build. It validates prepared
-metadata, the compact outer state tree, actor records, requested aliases, patches, and manifest
-linkage. This keeps startup proportional to the prepared state boundary rather than an imported
-actor's full storage; an archive missing an unpatched actor-state block fails when that block is
-first accessed.
-
-The root stored by `press` is the prepared imported root. The node immediately derives a writable
-current root when it adds development accounts. `filecoin_getStateRoots` reports both roots, and the
-current root advances after adopted transactions while the prepared root remains fixed.
-
-## Code ownership
-
-The separate tool establishes a real shared state boundary:
-
-```text
-fvm-anvil-state
-    ForestCAR reader and writer
-    prepared-state metadata
-    source snapshot context extraction
-    state-tree construction and export
-    Init map reconstruction
-    EVM state adapters and patches
-
-press
-    offline CLI and recipe parsing
-
-fvm-anvil-node
-    live mutable execution and development-account overlay
-```
-
-Both binaries use the same prepared-state metadata and ForestCAR blockstore implementation.
-`fvm-anvil-node` remains the sole owner of live chain state; the shared state crate owns only storage
-formats and deterministic offline transformations.
+The shared `fvm-anvil-state` crate owns ForestCAR, prepared metadata, source-context extraction,
+state-tree export, Init reconstruction, and EVM patch adapters. `press` owns the offline CLI and
+recipe parsing; `fvm-anvil-node` alone owns live execution, the development-account overlay, mining,
+snapshots/reverts, RPC indexes, and gas diagnostics.
 
 ## Current limitations
 
