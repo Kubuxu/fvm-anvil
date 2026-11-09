@@ -8,9 +8,9 @@ Guidance for AI coding agents working in this repository.
 
 Read the relevant living documentation before changing behavior:
 
-- `docs/design.md`: execution model, defaults, implemented RPC surface, and compatibility
-  constraints.
-- `docs/implementation-plan.md`: crate ownership and remaining work.
+- `docs/design.md`: execution model, crate ownership, defaults, implemented RPC surface, and
+  compatibility constraints.
+- `docs/roadmap.md`: remaining work and completion guidance.
 - `docs/press.md`: prepared-state format and import boundary.
 - `docs/press-recipes.md`: reproducible mainnet-state preparation workflows.
 

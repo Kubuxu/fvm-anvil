@@ -50,7 +50,7 @@ development payment token is native-FIL-backed Solady WETH, **not USDFC**; an ex
 real 18-decimal token can be supplied. PoRep, PoSt, native mining/wallet APIs, and general
 Lotus compatibility are not included.
 
-The [completed compatibility record](docs/curio-compatibility-plan.md) lists the supported
+The [Curio PDP compatibility record](docs/curio-pdp-compatibility.md) lists the supported
 APIs, limits, tested revisions, and verification evidence. The separate
 [FWSS benchmark](benchmarks/fwss/README.md) uses historical imported state and a different
 deployment model.
@@ -99,7 +99,7 @@ FILECOIN_ASSERTIONS=1 \
 tests/acceptance/run.sh
 ```
 
-See [AGENTS.md](AGENTS.md) for repository structure and contribution constraints, [docs/design.md](docs/design.md) for the execution model, and [docs/implementation-plan.md](docs/implementation-plan.md) for remaining work.
+See [AGENTS.md](AGENTS.md) for contribution constraints, [docs/design.md](docs/design.md) for architecture and behavior, and [docs/roadmap.md](docs/roadmap.md) for remaining work. Prepared-state examples are in [docs/press-recipes.md](docs/press-recipes.md).
 
 ## License
 

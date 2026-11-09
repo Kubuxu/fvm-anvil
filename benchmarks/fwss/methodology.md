@@ -1,24 +1,24 @@
-# FWSS benchmark design
+# FWSS benchmark methodology
 
 ## Purpose
 
-Build a development benchmark for the supported PDPVerifier callbacks into the Filecoin Warm Storage Service (FWSS). It must compare any number of PDP/FWSS implementation combinations, preserve completed measurements, expose contract-call gas attribution, and find practical batch-size limits without rerunning unrelated cases.
+The implemented benchmark compares supported PDPVerifier callbacks into the Filecoin Warm Storage Service (FWSS) across PDP/FWSS implementation combinations. It preserves completed measurements, exposes contract-call gas attribution, and searches for practical batch-size limits without rerunning unrelated cases.
 
-Simplicity is a requirement. The benchmark is a local development tool, not a permanent reproducibility or archival system.
+It is a local development tool, not a complete reproducibility or archival system. Operational commands and historical archive preparation are in [`README.md`](README.md).
 
 ## Deployment-model boundary
 
-This design describes the imported FWSS 1.3.0 baseline and the existing
+This methodology covers the imported FWSS 1.3.0 baseline and the existing
 single-implementation upgrade runner. Its local FWSS build expects a monolithic
 implementation artifact. The fresh FWSS 1.5.0 ERC-8167 dispatcher/facet deployment
 is implemented separately in [`tests/curio`](../../tests/curio/README.md), not by
-this benchmark's `local-new` variant. The matrix examples below describe the
-benchmark protocol; they do not establish compatibility with arbitrary newer source trees.
+this benchmark's `local-new` variant. Configured local variants do not establish
+compatibility with arbitrary newer source trees or pin historical candidate revisions.
 
 
 ## Scope
 
-Measure the public transactions that invoke every supported FWSS callback:
+The benchmark measures public transactions that invoke the supported FWSS callbacks:
 
 | Public operation | FWSS callback |
 | --- | --- |
@@ -30,11 +30,11 @@ Measure the public transactions that invoke every supported FWSS callback:
 | `provePossession` | `possessionProven` |
 | `deleteDataSet` | `dataSetDeleted` |
 
-Measure `processPieceDeletions` as the PDP storage operation that applies queued removals, `terminateService` as a direct FWSS lifecycle operation, and `cleanupPieces` as the PDP teardown operation affected by storage layout. A deletion case may execute termination and settlement as unmeasured setup, but termination also has its own independent measured case.
+It also measures `processPieceDeletions` as the PDP storage operation that applies queued removals, `terminateService` as a direct FWSS lifecycle operation, and `cleanupPieces` as the PDP teardown operation affected by storage layout. A deletion case may execute termination and settlement as unmeasured setup, but termination also has its own independent measured case.
 
-Do not benchmark `storageProviderChanged`. FWSS deliberately rejects it, and that known unsupported path does not help evaluate the planned changes.
+`storageProviderChanged` is excluded because FWSS deliberately rejects it.
 
-The initial changes under comparison are:
+The original comparison targeted:
 
 - a new PDPVerifier storage layout used only by data sets created after the upgrade, while existing data sets continue to use the legacy layout;
 - a changed PDPVerifier `PiecesAdded` event format;
@@ -45,7 +45,7 @@ The benchmark reports transaction and contract-call gas. It does not claim Solid
 
 ## Imported state and addresses
 
-Use `snapshots/fwss-mainnet-v1.3.0.press.car.zst`. It contains the expected mainnet deployment at epoch 6,251,280 and reports PDPVerifier 3.4.0 and FWSS 1.3.0. Do not use `snapshots/fwss-mainnet-v1.3.0-retest.press.car.zst`; the expected FWSS proxy has no code in that archive.
+The configured archive is `snapshots/fwss-mainnet-v1.3.0.press.car.zst`, with the expected mainnet deployment at epoch 6,251,280, PDPVerifier 3.4.0, and FWSS 1.3.0. Its original ForestCAR source path and availability are not established; see [archive preparation](README.md#prepare-the-historical-archive). Validate proxy code, implementation targets, and runtime versions rather than trusting an archive filename.
 
 | Component | Address |
 | --- | --- |
@@ -56,17 +56,19 @@ Use `snapshots/fwss-mainnet-v1.3.0.press.car.zst`. It contains the expected main
 | ServiceProviderRegistry proxy | `0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB` |
 | FWSS state view | `0xAD28BBF18A72f728Ed816D07F5a1d7Ec40D68b5e` |
 
-The runner validates these addresses and deployed version strings before measuring anything.
+The runner calls `VERSION()` through the configured PDP and FWSS proxies and requires `3.4.0` and `1.3.0` before setup. It also compares the node's current root with the recorded imported root. These are runtime compatibility checks, not complete archive authentication.
 
 ## Repository layout
 
-Keep the implementation split only at concrete responsibilities:
+Responsibilities are split as follows:
 
 ```text
 benchmarks/fwss/
-├── design.md
+├── README.md
+├── methodology.md
 ├── suite.json
 ├── run.py
+├── variants.py
 ├── chain.py
 ├── fixtures.py
 ├── operations.py
@@ -76,68 +78,20 @@ benchmarks/fwss/
 
 - `run.py`: CLI, variant/case selection, orchestration, resumption, and atomic result writes.
 - `chain.py`: `cast` commands, JSON-RPC, transaction submission, receipts, snapshots, and upgrades.
+- `variants.py`: Solidity build fingerprints, source captures, library linking, deployment, and proxy upgrades.
 - `fixtures.py`: imported-state patching, funding, signatures, and deterministic lifecycle pre-states.
 - `operations.py`: supported operation handlers, fixed cases, postconditions, and maximum-batch probing.
 - `traces.py`: Filecoin gas trace validation and contract-call attribution.
 - `report.py`: arbitrary cross-variant tables and machine-readable output.
 - `suite.json`: builds, variants, fixed cases, and boundary-search settings.
 
-Do not introduce classes or plugin interfaces merely to match these files. Functions and small data dictionaries are sufficient. Merge files if implementation shows that a boundary has no real behavior of its own.
 
 ## Builds and variants
 
 A build describes one PDP or FWSS implementation. A variant selects one build of each component plus when its fixtures are created. Keeping builds separate avoids rebuilding and re-recording the same implementation for combinatorial variants.
 
-Example `suite.json` excerpt:
 
-```json
-{
-  "builds": {
-    "pdp-deployed": {
-      "component": "pdp",
-      "kind": "imported"
-    },
-    "fwss-deployed": {
-      "component": "fwss",
-      "kind": "imported"
-    },
-    "pdp-layout-a": {
-      "component": "pdp",
-      "kind": "local",
-      "repository": "/path/to/pdp",
-      "artifact": "out/PDPVerifier.sol/PDPVerifier.json",
-      "separatePieceDeletions": true,
-      "upgradeCall": "migrate()"
-    },
-    "fwss-no-piece-metadata": {
-      "component": "fwss",
-      "kind": "local",
-      "repository": "/path/to/filecoin-services/service_contracts",
-      "artifact": "out/FilecoinWarmStorageService.sol/FilecoinWarmStorageService.json",
-      "upgradeCall": "0x"
-    }
-  },
-  "variants": {
-    "deployed": {
-      "pdp": "pdp-deployed",
-      "fwss": "fwss-deployed",
-      "fixtureCreation": "after-upgrades"
-    },
-    "candidate-legacy": {
-      "pdp": "pdp-layout-a",
-      "fwss": "fwss-no-piece-metadata",
-      "fixtureCreation": "before-upgrades"
-    },
-    "candidate-new": {
-      "pdp": "pdp-layout-a",
-      "fwss": "fwss-no-piece-metadata",
-      "fixtureCreation": "after-upgrades"
-    }
-  }
-}
-```
-
-Adding a normal implementation variant requires only a build entry and a variant entry. Python changes are allowed only when a build introduces a genuinely different constructor, upgrade protocol, or public operation.
+Ordinary implementation variants are configured with build and variant entries in `suite.json`. A different constructor, upgrade protocol, or public operation can require runner changes; configuration alone does not establish compatibility.
 
 Every link reference in a local implementation artifact is resolved to the
 matching Forge artifact, built from the same repository revision, included in
@@ -168,7 +122,7 @@ Some cases are naturally not applicable. For example, candidate `createDataSet` 
 
 ## Version capture
 
-This is deliberately lightweight. Record once per build:
+Build provenance is deliberately lightweight. Source/build captures and upgrade records include:
 
 - `git rev-parse HEAD`;
 - `git describe --tags --always --dirty`;
@@ -177,17 +131,15 @@ This is deliberately lightweight. Record once per build:
 - creation and deployed runtime bytecode hashes;
 - deployed implementation address.
 
-A parent repository diff does not preserve dirty submodule contents. Run the same capture inside each source repository actually used by the build, including the PDP submodule when FWSS points to it. Save each dirty repository's patch separately. Warn and stop if an untracked Solidity file could affect the build, because `git diff` cannot preserve it.
+A parent repository diff does not preserve dirty submodule contents. The runner also captures the FWSS build's `lib/pdp` repository when present, with dirty patches saved separately. It stops if a captured repository reports an untracked Solidity file, because `git diff` cannot preserve that file.
 
-Store captures by their computed build fingerprint, not by the mutable name from `suite.json`. The variant manifest maps its configured build name to that immutable fingerprint. A changed commit, dirty patch, or bytecode therefore creates a new capture without overwriting provenance referenced by completed cases.
+Captures are stored by computed build fingerprint, not only by the mutable name from `suite.json`. The variant manifest maps configured build names to fingerprints. A changed captured commit, dirty patch, or artifact bytecode produces a new capture without overwriting provenance referenced by completed cases.
 
-The result manifest also records the fvm-anvil Git revision and `cast`/`forge` versions. Record the artifact's compiler version when present, but do not save compiler manifests: deployed bytecode hashes are the execution-relevant build output.
-
-Do not save Git bundles, complete repositories, or duplicate build artifacts.
+The execution plan records the fvm-anvil repository revision and dirty description plus `cast`/`forge` versions. This describes the checkout, not the live node executable. Compiler metadata is recorded when present; full repositories, Git bundles, and duplicate build artifacts are not retained.
 
 ## Result storage and resumption
 
-Store each measured case independently:
+Each measured case is stored independently:
 
 ```text
 benchmarks/fwss/results/mainnet-v1.3.0/
@@ -214,9 +166,11 @@ Every result has two identifiers:
 - `comparisonKey`: operation, parameters, and semantic fixture profile. Reports join variants on this value.
 - `measurementId`: the comparison key plus archive, variant/build, execution-plan, and schema fingerprints. Resumption uses this value.
 
-The canonical execution-plan fingerprint covers the resolved build and upgrade configuration, fixture chronology and recipe version, deterministic payload hashes, transaction gas/fee envelope, relevant chain limits, fvm-anvil revision, and trace schema. Changing a measurement-affecting input cannot silently reuse an old case, while adding an unrelated case does not invalidate existing results.
+The execution-plan fingerprint includes the recorded archive digest, fvm-anvil repository revision/dirty description, tool versions, resolved variant configuration, build fingerprints, contract addresses, funding, case parameters, transaction gas/fee envelope, result schema, and runner-source fingerprint. Adding an unrelated case does not invalidate existing results.
 
-Write a case to a temporary file and atomically rename it after its terminal outcome is fully recorded:
+On initial manifest creation the archive is hashed and imported roots are recorded. On reuse, `_manifest` checks only the archive size and reuses its recorded SHA-256; same-size replacement content is not detected by that check. Startup compares the node's current root with the manifest and checks baseline proxy versions. The execution plan does not hash or authenticate the live node binary, nor capture every live chain limit. Reuse therefore requires an unchanged archive and node build; if either changes, start a fresh node with a separate results directory. Matching identities are not a complete reproducibility guarantee.
+
+A case is written to a temporary file and atomically renamed after its terminal outcome is fully recorded:
 
 - committed success, revert, or out-of-gas: receipt, Filecoin trace, outcome classification, receipt/trace gas agreement, and success postconditions where applicable;
 - admission failure: structured RPC rejection plus the submitted transaction envelope;
@@ -294,7 +248,7 @@ Every fixed-size case and every maximum-search probe starts from the same fixtur
 
 Use the existing valid height-5 zero-tree CommPv2 fixture. It supplies a valid proof for every possible challenge offset without mocked randomness.
 
-Initial fixture families are:
+Fixture families include:
 
 - funded sender with no data set;
 - empty data set;
@@ -318,7 +272,7 @@ Measure:
 
 ### Adding pieces
 
-Measure fixed sizes initially configured as:
+The configured fixed sizes are:
 
 ```text
 1, 8, 32, 64, 128, 256, 512, 1024, 2048
@@ -343,7 +297,7 @@ For older PDP builds, `processPieceDeletions` is `not-applicable` and `nextProvi
 
 ### Proving possession
 
-Measure a valid proof with five challenges for each relevant legacy/new variant. Do not add proof-count dimensions until a change makes them useful.
+A valid proof uses five challenges for each relevant legacy/new variant.
 
 ### Service termination, data-set deletion, and cleanup
 
@@ -383,7 +337,7 @@ Run boundary discovery independently for each variant, operation, fixture, and m
 5. Otherwise, if a failure was found, binary-search between the last success and first failure.
 6. Save every probe as a normal case and write a small boundary summary referencing them.
 
-Do not add duplicate confirmation attempts initially. The binary search already retains the observed adjacent success and failure. Do not claim an exact maximum if every probe through the ceiling succeeds; report the measured `successfulThrough: ceiling` instead.
+The search retains the observed adjacent success and failure without duplicate confirmation attempts. If every probe through the ceiling succeeds, it reports `successfulThrough: ceiling`, not an exact maximum.
 
 Only an observed outcome from the measured operation can bracket its exact boundary. `setup-unreachable` stops the search without converting the prerequisite's limit into the measured operation's limit. Report the operation boundary as prerequisite-limited/unknown, include any measured `successfulThrough` lower bound, and identify the blocking prerequisite and size. Discover and report that prerequisite's boundary separately.
 
@@ -435,7 +389,8 @@ benchmarks/fwss/report.py \
 benchmarks/fwss/report.py \
   --results benchmarks/fwss/results/mainnet-v1.3.0 \
   --baseline deployed \
-  --variants candidate-legacy candidate-new layout-b-new \
+  --variant local-legacy \
+  --variant local-new \
   --operation addPieces
 ```
 
@@ -450,17 +405,11 @@ Output:
 
 If the baseline fails and another variant succeeds, report the capacity change without inventing a percentage. Missing cases remain visible as `not-run` and do not block comparison of completed cases.
 
-## Initial acceptance checks
+## Result validity requirements
 
-Before relying on collected results, prove the runner end to end:
-
-1. validate the imported archive, versions, and addresses;
-2. patch owner and provider state and verify public getters;
-3. fund USDFC, deposit, and verify operator approval;
-4. run one successful creation/add/prove/removal lifecycle through the real contracts;
-5. upgrade PDP and FWSS through their public upgrade paths and verify adopted bytecode;
-6. prove one pre-upgrade data set remains usable after upgrade;
-7. prove one post-upgrade data set uses the candidate path through its public behavior;
-8. capture and attribute one successful and one reverted gas trace;
-9. interrupt and resume a run without replacing completed case files;
-10. add a configured variant and batch size without changing Python code, then compare it with existing results.
+A usable measurement depends on the imported archive, versions, and addresses;
+verified owner/provider setup and funding; real signatures and lifecycle calls;
+public upgrade paths with adopted bytecode validation; and fixtures whose
+pre-/post-upgrade chronology matches the selected variant. Setup/configuration
+failures must not be relabeled as measured contract outcomes. The presence of a
+result file alone does not prove these requirements or authenticate its inputs.
