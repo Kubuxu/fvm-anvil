@@ -24,7 +24,7 @@ use crate::verify::{
 };
 
 const MIN_NETWORK_VERSION: u32 = 21;
-const MAX_NETWORK_VERSION: u32 = 28;
+const MAX_NETWORK_VERSION: u32 = 29;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArchiveBuildOptions {
@@ -65,7 +65,7 @@ pub enum ArchiveBuildError {
     OutputExists(PathBuf),
     #[error("output path has no parent directory: {0}")]
     MissingParent(PathBuf),
-    #[error("unsupported network version {0}; this ref-FVM supports versions 21 through 28")]
+    #[error("unsupported archive network version {0}; Press supports versions 21 through 29")]
     UnsupportedNetworkVersion(u32),
     #[error("failed to construct selected state: {0}")]
     Construct(String),
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_network_versions_unsupported_by_ref_fvm() {
+    fn rejects_unsupported_archive_network_versions() {
         let source = MemoryBlockstore::default();
         let context = SnapshotContext {
             head_tipset: vec![external(20)],
@@ -361,16 +361,21 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("unsupported.press.car.zst");
 
-        let error = build_prepared_archive(
-            &source,
-            &context,
-            &[],
-            &output,
-            ArchiveBuildOptions { network_version: 20, overwrite: false, verify_output: false },
-        )
-        .unwrap_err();
-        assert!(matches!(error, ArchiveBuildError::UnsupportedNetworkVersion(20)));
-        assert!(!output.exists());
+        for network_version in [20, 30] {
+            let error = build_prepared_archive(
+                &source,
+                &context,
+                &[],
+                &output,
+                ArchiveBuildOptions { network_version, overwrite: false, verify_output: false },
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                ArchiveBuildError::UnsupportedNetworkVersion(version) if version == network_version
+            ));
+            assert!(!output.exists());
+        }
     }
 
     #[test]

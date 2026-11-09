@@ -24,9 +24,14 @@ target/release/press inspect snapshots/OUTPUT.press.car.zst
 ```
 
 Supply an existing source ForestCAR and recipe; the filenames above are placeholders. Builds accept
-`--network-version 28`, `--force` to replace an output, and `--verify` for the additional audit
-described [below](#validation-and-runtime-loading). Progress goes to stderr; the final build summary
-goes to stdout.
+`--network-version 21` through `--network-version 29` (default 28), `--force` to replace an output,
+and `--verify` for the additional audit described [below](#validation-and-runtime-loading).
+Progress goes to stderr; the final build summary goes to stdout.
+
+NV29 extraction preserves the source actor codes, manifest, and selected state DAGs without executing
+them. The System and Init wire layouts remain compatible with the offline reconstruction. This does
+not add NV29 execution support: the current node still requires NV28/v18 and rejects an NV29 archive.
+Use the actual source network version rather than relabeling a newer snapshot to make it load.
 
 Start the foreground node in **terminal A**:
 

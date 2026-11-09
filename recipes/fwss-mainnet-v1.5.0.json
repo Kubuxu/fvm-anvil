@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "actors": [
+    { "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f" },
+    { "address": "0x50d271127b3bEaeF4b72B5cDD329B2ba3E698df8" },
+    { "address": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1" },
+    { "address": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3" },
+    { "address": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7" },
+    { "address": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2" },
+    { "address": "0x8b760eb8314a37343662181dabb0f09ef05f9a19" },
+    { "address": "0x98aa1637dc789fd30479185ac5b8d010b89303ac" },
+    { "address": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f" },
+    { "address": "0xc89995181e165917de165827cc742facf43e0cad" },
+    { "address": "0xce05f92c107d2d207dbaeb4c02ebf1442e131557" },
+    { "address": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c" },
+    { "address": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4" },
+    { "address": "0xec384887a59e0706fc2017df0feb87301017d2d6" },
+    { "address": "0xf88bb481cb9aec03d879ce4c685e21416a5dff2b" },
+    { "address": "0xfd0508a971cd7116091f00e24fc5aa84b3f19276" },
+    { "address": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F" },
+    { "address": "0x04d4cdb99e34d7e9a366e7eba7a835e034bc41b1" },
+    { "address": "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB" },
+    { "address": "0x1bb676392272313598930fef8d5b66ffecce02f0" },
+    { "address": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa" },
+    { "address": "0x74FD50525A958aF5d484601E252271f9625231aB" },
+    { "address": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045" },
+    { "address": "0x584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b" },
+    { "address": "0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b" }
+  ]
+}

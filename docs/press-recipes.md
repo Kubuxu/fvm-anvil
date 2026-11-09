@@ -201,3 +201,28 @@ and [lifecycle comparison](../benchmarks/pdp-verifier/README.md#pdpverifier-life
 including candidate provenance, fixture chronology, result tables, and terminal A/B commands.
 Restart the node from this prepared archive between independent runner invocations; both runners
 mutate state.
+
+## Modular FWSS extraction
+
+For ERC-8167 deployments, selecting the FWSS proxy and its ERC-1967 implementation is insufficient:
+the implementation is a dispatcher, not the service monolith.
+
+1. Call `selectors()(bytes4[])` through the FWSS proxy at the source snapshot's state.
+2. Resolve every selector with `implementation(bytes4)(address)` and include every distinct delegate,
+   including the generated Selectors and Implementation introspection contracts.
+3. Resolve each module's dependencies and external proxies recursively. Config-module getters alone
+   do not establish other modules' immutable addresses.
+4. Check `viewContractAddress()` before selecting a standalone state view; modular FWSS can serve
+   views through the service proxy itself.
+5. Include the endorsement set when the workload needs it; it is a separately selected sidecar.
+
+Use the pinned Josuke ledger to identify modules, but treat snapshot routes as authoritative.
+The patch-free mainnet example is
+[`fwss-mainnet-v1.5.0.json`](../recipes/fwss-mainnet-v1.5.0.json); its source provenance and extraction
+results are recorded separately in
+[`fwss-mainnet-v1.5.0.evidence.json`](../recipes/fwss-mainnet-v1.5.0.evidence.json).
+It excludes legacy rollout artifacts, unrelated PDP listeners, wallet/control contracts, and the
+USDFC minting/collateral system.
+
+Preserve the source network version when building. Press can extract NV29 state, but the current
+NV28/v18 node cannot execute it; historical RPC checks do not prove an imported archive's runtime.

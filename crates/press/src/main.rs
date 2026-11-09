@@ -60,8 +60,8 @@ enum Command {
 
 fn parse_network_version(value: &str) -> Result<u32, String> {
     let version = value.parse::<u32>().map_err(|error| error.to_string())?;
-    if !(21..=28).contains(&version) {
-        return Err("network version must be between 21 and 28".into());
+    if !(21..=29).contains(&version) {
+        return Err("network version must be between 21 and 29".into());
     }
     Ok(version)
 }
@@ -386,21 +386,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_network_version_unsupported_by_ref_fvm() {
-        let error = Cli::try_parse_from([
-            "press",
-            "build",
-            "--snapshot",
-            "source.car",
-            "--recipe",
-            "recipe.json",
-            "--output",
-            "prepared.car",
-            "--network-version",
-            "29",
-        ])
-        .unwrap_err();
-        assert!(error.to_string().contains("between 21 and 28"));
+    fn validates_archive_network_version_boundaries() {
+        for version in ["21", "28", "29"] {
+            assert_eq!(super::parse_network_version(version).unwrap().to_string(), version);
+        }
+        for version in ["20", "30", "-1", "4294967296"] {
+            assert!(super::parse_network_version(version).is_err());
+        }
     }
 
     #[test]

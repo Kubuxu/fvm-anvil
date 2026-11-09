@@ -1,0 +1,910 @@
+{
+  "source": {
+    "snapshot": "snapshots/forest_snapshot_mainnet_2026-11-09_height_6530880.forest.car.zst",
+    "epoch": 6530880,
+    "timestamp": 1794232800,
+    "networkVersion": 29,
+    "chainId": 314,
+    "stateRoot": "bafy2bzaceatovyxuwiforynmxzmkthv7dh3jo6zrpkv6p5onds5qbtvbpvxkq",
+    "tipsetCids": [
+      {
+        "/": "bafy2bzacea3bfjizcfsazta5lcn2tfrr5np4hsskhhdmugt723a5jhkm5r6w6"
+      },
+      {
+        "/": "bafy2bzacebgvdy3aqyjyiqnz3xacsr7bndy43cjk3pr377quxe4ibcr2hgy5w"
+      },
+      {
+        "/": "bafy2bzacedqg3vimwwbryj4ifqjq3bmsm76abi4gnr6x5elzcyfjf7moep4e4"
+      },
+      {
+        "/": "bafy2bzaceccdnw6cocbus2ngjcntlgqym7k3lzsvkk5aej4we2r4yyseazezu"
+      }
+    ]
+  },
+  "provenance": {
+    "repository": "https://github.com/FilOzone/filecoin-services",
+    "manifestCommit": "305a44723c1f0e612e294f51f5fccfc5a4812a62",
+    "deploymentSourceCommit": "649e23f3329abf6a24d01c30359958ee7d0e0948",
+    "erc8167Commit": "44b41a1a94a491b54920ae8dd3c16aa974b6bf09",
+    "rpc": "https://api.node.glif.io/rpc/v1",
+    "historicalRpcBlock": 6530880,
+    "priorBlockRoutesMatch": true,
+    "caveat": "Historical RPC checks are not runtime validation of the prepared archive. The source snapshot imports the head parent state. Selector enumeration and every route were also checked at epoch 6530879."
+  },
+  "contracts": {
+    "FWSS proxy": {
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "codeBytes": 130,
+      "implementation": "0x00000000000000000000000050d271127b3beaef4b72b5cdd329b2ba3e698df8",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "ERC8167 dispatcher": {
+      "address": "0x50d271127b3bEaeF4b72B5cDD329B2ba3E698df8",
+      "codeBytes": 88,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSDataSetModule": {
+      "address": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+      "codeBytes": 11059,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSViewModule": {
+      "address": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+      "codeBytes": 5987,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSAuthorizationModule": {
+      "address": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+      "codeBytes": 10758,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSProvingModule": {
+      "address": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+      "codeBytes": 4558,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "ExtsloadModule": {
+      "address": "0x8b760eb8314a37343662181dabb0f09ef05f9a19",
+      "codeBytes": 138,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSMigrateModule": {
+      "address": "0x98aa1637dc789fd30479185ac5b8d010b89303ac",
+      "codeBytes": 1245,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSConfigModule": {
+      "address": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f",
+      "codeBytes": 266,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "OwnershipModule": {
+      "address": "0xc89995181e165917de165827cc742facf43e0cad",
+      "codeBytes": 451,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSProviderManagementModule": {
+      "address": "0xce05f92c107d2d207dbaeb4c02ebf1442e131557",
+      "codeBytes": 687,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSMetadataModule": {
+      "address": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c",
+      "codeBytes": 701,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSFilBeamModule": {
+      "address": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+      "codeBytes": 3081,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "Selectors": {
+      "address": "0xec384887a59e0706fc2017df0feb87301017d2d6",
+      "codeBytes": 669,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FWSSViewContractModule": {
+      "address": "0xf88bb481cb9aec03d879ce4c685e21416a5dff2b",
+      "codeBytes": 61,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "lib/erc8167/src/Implementation.evm": {
+      "address": "0xfd0508a971cd7116091f00e24fc5aa84b3f19276",
+      "codeBytes": 49,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "PDP proxy": {
+      "address": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
+      "codeBytes": 130,
+      "implementation": "0x00000000000000000000000004d4cdb99e34d7e9a366e7eba7a835e034bc41b1",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "PDP implementation": {
+      "address": "0x04d4cdb99e34d7e9a366e7eba7a835e034bc41b1",
+      "codeBytes": 22923,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "Provider registry proxy": {
+      "address": "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB",
+      "codeBytes": 130,
+      "implementation": "0x0000000000000000000000001bb676392272313598930fef8d5b66ffecce02f0",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "Provider registry implementation": {
+      "address": "0x1bb676392272313598930fef8d5b66ffecce02f0",
+      "codeBytes": 17563,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "FilecoinPay": {
+      "address": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
+      "codeBytes": 20701,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "SessionKeyRegistry": {
+      "address": "0x74FD50525A958aF5d484601E252271f9625231aB",
+      "codeBytes": 1157,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "USDFC proxy": {
+      "address": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045",
+      "codeBytes": 2227,
+      "implementation": "0x000000000000000000000000584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "USDFC implementation": {
+      "address": "0x584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b",
+      "codeBytes": 9619,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "Endorsement set": {
+      "address": "0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b",
+      "codeBytes": 1737,
+      "implementation": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "beacon": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "routes": {
+    "0x05f892ec": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x06fdde03": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c",
+    "0x0d741577": "0xfd0508a971cd7116091f00e24fc5aa84b3f19276",
+    "0x0e8ae05f": "0x98aa1637dc789fd30479185ac5b8d010b89303ac",
+    "0x101c1eab": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x1047717c": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x11d41294": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x149ac5cc": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x1a7bf46f": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0x1e2eaeaf": "0x8b760eb8314a37343662181dabb0f09ef05f9a19",
+    "0x2316f736": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x2abd465c": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x2ad6e6b5": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x2afcc1a4": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x315e49ea": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x3208aa1f": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x356de02b": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0x35b0e3f4": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x3615edff": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+    "0x4059b6d7": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x48086444": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x4a1fd7a3": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0x4d745000": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x4dc17df1": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x5379a435": "0x8b760eb8314a37343662181dabb0f09ef05f9a19",
+    "0x5482bdf9": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x5840b83d": "0xce05f92c107d2d207dbaeb4c02ebf1442e131557",
+    "0x5e786446": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+    "0x617285ad": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x648564c0": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+    "0x686c4d3c": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c",
+    "0x698762cb": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x6e25b978": "0xec384887a59e0706fc2017df0feb87301017d2d6",
+    "0x715018a6": "0xc89995181e165917de165827cc742facf43e0cad",
+    "0x725e3216": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x7284e416": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c",
+    "0x7598a1cd": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x7709a7f7": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x7a9ebc15": "0xf88bb481cb9aec03d879ce4c685e21416a5dff2b",
+    "0x7dab7c40": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x84b0196e": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x85b37e8b": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x8da5cb5b": "0xc89995181e165917de165827cc742facf43e0cad",
+    "0x8f9324dd": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0x93124a79": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0x967c6f21": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x98a0b04e": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0x9f6aa572": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xa71f9fec": "0xce05f92c107d2d207dbaeb4c02ebf1442e131557",
+    "0xaa27ebcc": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0xb5a578fc": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xb6133b7a": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xb7029144": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xb997a71e": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xbc471469": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f",
+    "0xbdaac056": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xc5153f70": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0xca2e5728": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xce5494bb": "0x98aa1637dc789fd30479185ac5b8d010b89303ac",
+    "0xcee4f4c7": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+    "0xd0e3c954": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xd1147eee": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xd39b33ab": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f",
+    "0xdd6979bf": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+    "0xde4b6b71": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f",
+    "0xe7954aa7": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xea0f9354": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xeb561d9c": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+    "0xf2fde38b": "0xc89995181e165917de165827cc742facf43e0cad",
+    "0xf417c13f": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xf6814d79": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+    "0xfe295953": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+    "0xffa1ad74": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c"
+  },
+  "facetCodeHashes": {
+    "src/modules/ExtsloadModule.sol:ExtsloadModule": {
+      "address": "0x8b760eb8314a37343662181dabb0f09ef05f9a19",
+      "expected": "0xb7fe1674d2ee34222651f7b1676390ce31866bafb74e00538ef1031fe7428b89",
+      "actual": "0xb7fe1674d2ee34222651f7b1676390ce31866bafb74e00538ef1031fe7428b89"
+    },
+    "src/modules/FWSSAuthorizationModule.sol:FWSSAuthorizationModule": {
+      "address": "0x5a56e54c3a21f91bc171e2ffc0150168676897a7",
+      "expected": "0x4035edf28574b1f33c5a7f826b7534b3993156dbd69ebd83721368894d3e7b9b",
+      "actual": "0x4035edf28574b1f33c5a7f826b7534b3993156dbd69ebd83721368894d3e7b9b"
+    },
+    "src/modules/FWSSConfigModule.sol:FWSSConfigModule": {
+      "address": "0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f",
+      "expected": "0xc63d0d44e93f3e2fa09047f5ffb575c43b1795b717fda6bfa5511abb9a463930",
+      "actual": "0xc63d0d44e93f3e2fa09047f5ffb575c43b1795b717fda6bfa5511abb9a463930"
+    },
+    "src/modules/FWSSDataSetModule.sol:FWSSDataSetModule": {
+      "address": "0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1",
+      "expected": "0xf8eda3a832a482877dbc6f005949cc1b9034a85cbd77150b50c0cb4237ed5055",
+      "actual": "0xf8eda3a832a482877dbc6f005949cc1b9034a85cbd77150b50c0cb4237ed5055"
+    },
+    "src/modules/FWSSFilBeamModule.sol:FWSSFilBeamModule": {
+      "address": "0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4",
+      "expected": "0x4e629aec1d626b974dfccee20a9834f0a2dcf8549366d9b2ee30fa73a287a6cd",
+      "actual": "0x4e629aec1d626b974dfccee20a9834f0a2dcf8549366d9b2ee30fa73a287a6cd"
+    },
+    "src/modules/FWSSMetadataModule.sol:FWSSMetadataModule": {
+      "address": "0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c",
+      "expected": "0xe826cf4eef9d4bfc1736831d2c88b926e2cdf9b7a4f4596de6a7dd0596fa273f",
+      "actual": "0xe826cf4eef9d4bfc1736831d2c88b926e2cdf9b7a4f4596de6a7dd0596fa273f"
+    },
+    "src/modules/FWSSMigrateModule.sol:FWSSMigrateModule": {
+      "address": "0x98aa1637dc789fd30479185ac5b8d010b89303ac",
+      "expected": "0xce965f2b04edf6966bfade6725a8c48ab6a82b31f1b8cd66226ab52f8645ee3d",
+      "actual": "0xce965f2b04edf6966bfade6725a8c48ab6a82b31f1b8cd66226ab52f8645ee3d"
+    },
+    "src/modules/FWSSProviderManagementModule.sol:FWSSProviderManagementModule": {
+      "address": "0xce05f92c107d2d207dbaeb4c02ebf1442e131557",
+      "expected": "0xdb8b79b391d4b6047c7831e9d10176a3471d12df3fdd6b76ca25d35fc61b50e7",
+      "actual": "0xdb8b79b391d4b6047c7831e9d10176a3471d12df3fdd6b76ca25d35fc61b50e7"
+    },
+    "src/modules/FWSSProvingModule.sol:FWSSProvingModule": {
+      "address": "0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2",
+      "expected": "0xb77ea7a343fa009d8a94324964cb22a3942d3541a4ab11cc9de9800be4b2e9a5",
+      "actual": "0xb77ea7a343fa009d8a94324964cb22a3942d3541a4ab11cc9de9800be4b2e9a5"
+    },
+    "src/modules/FWSSViewContractModule.sol:FWSSViewContractModule": {
+      "address": "0xf88bb481cb9aec03d879ce4c685e21416a5dff2b",
+      "expected": "0xcddd5ee83c9ebde9c5a8a4bf09ba69a03f9a9e014d48c4b4708f2197e6e8b41e",
+      "actual": "0xcddd5ee83c9ebde9c5a8a4bf09ba69a03f9a9e014d48c4b4708f2197e6e8b41e"
+    },
+    "src/modules/FWSSViewModule.sol:FWSSViewModule": {
+      "address": "0x129cc24160dbe808b867f5f06291bbf85eeff7c3",
+      "expected": "0xe09e49b55109c2d3e28ab0a7d2ddbfcd6b0ff70e0932fc50bfbce36d20d4424c",
+      "actual": "0xe09e49b55109c2d3e28ab0a7d2ddbfcd6b0ff70e0932fc50bfbce36d20d4424c"
+    },
+    "src/modules/OwnershipModule.sol:OwnershipModule": {
+      "address": "0xc89995181e165917de165827cc742facf43e0cad",
+      "expected": "0xceb1cfba14091509fe66674130833d4ef86eb7013808286a21078422f051fbab",
+      "actual": "0xceb1cfba14091509fe66674130833d4ef86eb7013808286a21078422f051fbab"
+    },
+    "lib/erc8167/src/Implementation.evm": {
+      "address": "0xfd0508a971cd7116091f00e24fc5aa84b3f19276",
+      "expected": "0x3439f309ca6be1708e22288122d506a67337e06a35ef9a79f0f193aaa9385ffb",
+      "actual": "0x3439f309ca6be1708e22288122d506a67337e06a35ef9a79f0f193aaa9385ffb"
+    }
+  },
+  "historicalCalls": [
+    {
+      "label": "FWSS VERSION",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "VERSION()(string)",
+      "args": [],
+      "exit": 0,
+      "output": "\"1.5.0\""
+    },
+    {
+      "label": "FWSS name",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "name()(string)",
+      "args": [],
+      "exit": 0,
+      "output": "\"Filecoin Warm Storage Service\""
+    },
+    {
+      "label": "FWSS payments",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "paymentsContractAddress()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa"
+    },
+    {
+      "label": "FWSS PDP",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "pdpVerifierAddress()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F"
+    },
+    {
+      "label": "FWSS view",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "viewContractAddress()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f"
+    },
+    {
+      "label": "FWSS owner",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "owner()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0x6386622B4915B027900d65560b0ab84F8a1ff2AA"
+    },
+    {
+      "label": "PDP version",
+      "address": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F",
+      "signature": "VERSION()(string)",
+      "args": [],
+      "exit": 0,
+      "output": "\"3.5.0\""
+    },
+    {
+      "label": "Registry count",
+      "address": "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB",
+      "signature": "getProviderCount()(uint256)",
+      "args": [],
+      "exit": 0,
+      "output": "51"
+    },
+    {
+      "label": "Token decimals",
+      "address": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045",
+      "signature": "decimals()(uint8)",
+      "args": [],
+      "exit": 0,
+      "output": "18"
+    },
+    {
+      "label": "Pay account",
+      "address": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
+      "signature": "accounts(address,address)(uint256,uint256,uint256,uint256)",
+      "args": [
+        "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045",
+        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+      ],
+      "exit": 0,
+      "output": "0\n0\n0\n0"
+    },
+    {
+      "label": "Session expiry",
+      "address": "0x74FD50525A958aF5d484601E252271f9625231aB",
+      "signature": "authorizationExpiry(address,address,bytes32)(uint256)",
+      "args": [
+        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "exit": 0,
+      "output": "0"
+    },
+    {
+      "label": "FWSS token",
+      "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      "signature": "usdfcTokenAddress()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045"
+    },
+    {
+      "label": "Endorsement getProviderIds",
+      "address": "0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b",
+      "signature": "getProviderIds()(uint256[])",
+      "args": [],
+      "exit": 0,
+      "output": "[1, 5, 37, 32, 36]"
+    },
+    {
+      "label": "Endorsement owner",
+      "address": "0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b",
+      "signature": "owner()(address)",
+      "args": [],
+      "exit": 0,
+      "output": "0xB87bb8b7d4D7b6eFCE5ac344c5Fd863c83Bd2193"
+    }
+  ],
+  "localRuntime": {
+    "status": "excluded-by-user",
+    "reason": "Current node supports NV28/v18, source is NV29 with newer actor codes."
+  },
+  "nativeActors": {
+    "FWSS proxy": {
+      "address": "f410fqqefaibtyqmodo6jptu2yshfkkhtogu76jzlymq",
+      "actorId": "f03681616",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacedaxc65o34wl3zusicfpq23gpbqibtlf72vwbxjek3x2bhiifvrsq"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fqqefaibtyqmodo6jptu2yshfkkhtogu76jzlymq"
+      }
+    },
+    "ERC8167 dispatcher": {
+      "address": "f410fkdjhcet3hpvo6s3swxg5gknsxi7gtdpy4ys3nma",
+      "actorId": "f03852331",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacedluo5qfkf4qdzmq2dpyx3uvzuvzwcfnqk5yikaeclpmvfr2hzsry"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fkdjhcet3hpvo6s3swxg5gknsxi7gtdpy4ys3nma"
+      }
+    },
+    "FWSSDataSetModule": {
+      "address": "f410fchgob324f7rupv5gwkonpvfuhr6o63prxbenu3i",
+      "actorId": "f03852337",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacecdpj5m3c5gw46rmhp3xinzir7z7gqbqfzan35matj24xytwnkn7g"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fchgob324f7rupv5gwkonpvfuhr6o63prxbenu3i"
+      }
+    },
+    "FWSSViewModule": {
+      "address": "f410fckomeqla3puarodh6xygfen37bpo756dppb5cea",
+      "actorId": "f03852344",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacebdt7b6nqrhpvx4zooewgki2wi3amk5wzzd3lwftkg7e5l23rvii6"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fckomeqla3puarodh6xygfen37bpo756dppb5cea"
+      }
+    },
+    "FWSSAuthorizationModule": {
+      "address": "f410fljloktb2eh4rxqlr4l74afibnbtwrf5hrcdpkei",
+      "actorId": "f03852335",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacecqpa723wfd2stdrqwbswdxsztmh5x7nsmp37qtiny3hxv5b2vuiw"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fljloktb2eh4rxqlr4l74afibnbtwrf5hrcdpkei"
+      }
+    },
+    "FWSSProvingModule": {
+      "address": "f410fn6ksnqo53lg7uga7jo6pbmi3qerhqawspiywnfy",
+      "actorId": "f03852342",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceag7w3h5c5k2qogksmupe66chfzsm7qj3pj5uys6mbz72klls4zwq"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fn6ksnqo53lg7uga7jo6pbmi3qerhqawspiywnfy"
+      }
+    },
+    "ExtsloadModule": {
+      "address": "f410frn3a5obrji3tintcdao2xmhqt3yf7gqzh624nua",
+      "actorId": "f03852334",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacectuneutx7gihe4nyorbqprcoxxbrzvog23h672ozuy6rtcvwwaus"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410frn3a5obrji3tintcdao2xmhqt3yf7gqzh624nua"
+      }
+    },
+    "FWSSMigrateModule": {
+      "address": "f410ftcvbmn64pcp5gbdzdbnmlogqcc4jga5mgzk2o2y",
+      "actorId": "f03852340",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceaqqbso3voeh5za53rddncxosoezpqheojmo6bmqocps6hkn6y7kc"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410ftcvbmn64pcp5gbdzdbnmlogqcc4jga5mgzk2o2y"
+      }
+    },
+    "FWSSConfigModule": {
+      "address": "f410fuypkkzadzzeorsgnuqtc22tplf3fxnz7gubksji",
+      "actorId": "f03852336",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceckwxkgec5xip4dsgyxsy4krevfzqzb4mel2blkt5cfc3o6unq6zs"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fuypkkzadzzeorsgnuqtc22tplf3fxnz7gubksji"
+      }
+    },
+    "OwnershipModule": {
+      "address": "f410fzcmzkga6czmrpxqwlat4y5bpvt2d4dfn6v2mswq",
+      "actorId": "f03852345",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacebkv73akru22kjnugaxkuyare2rb3hrbflclhiit3ajwq737jzuv6"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fzcmzkga6czmrpxqwlat4y5bpvt2d4dfn6v2mswq"
+      }
+    },
+    "FWSSProviderManagementModule": {
+      "address": "f410fzyc7slaqpuwsa7n25ngaf27riqxbgfkxyodnkya",
+      "actorId": "f03852341",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacearwxx6x4wigpi7fes2dqdtk2bqdk7algb3nvzaza43z6nvcmobkc"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fzyc7slaqpuwsa7n25ngaf27riqxbgfkxyodnkya"
+      }
+    },
+    "FWSSMetadataModule": {
+      "address": "f410f2a565v223r75cbsp726hxui6scdlbiamlw3kn2a",
+      "actorId": "f03852339",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacec7sc3xhmljgllaqsxzwdir5vtw7wdm4qtyymoqkhkiolgsznpupu"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410f2a565v223r75cbsp726hxui6scdlbiamlw3kn2a"
+      }
+    },
+    "FWSSFilBeamModule": {
+      "address": "f410f4g6a6m4c4xq2chnkbdchwypbrzrbouvefnk3cpi",
+      "actorId": "f03852338",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacecac5lz67cswvenfgqp2mfkvvb74zsgdfjpawxmknqifnbm6chsrg"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410f4g6a6m4c4xq2chnkbdchwypbrzrbouvefnk3cpi"
+      }
+    },
+    "Selectors": {
+      "address": "f410f5q4erb5ftydqn7bac7pq724hgaibpuww6k5ejiy",
+      "actorId": "f03852347",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceblh3i64foczejh4lqboaw6zfg7ik6pyo3yf7nwj2elyq64grprmo"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410f5q4erb5ftydqn7bac7pq724hgaibpuww6k5ejiy"
+      }
+    },
+    "FWSSViewContractModule": {
+      "address": "f410f7cf3jaoltlwahwdzzzggqxrbifvf37zla4zlnvq",
+      "actorId": "f03852343",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacedey7omktojm3jzwcxn3vzuhmb3hxrr4jgsle5u3swh4xbfpv4zqg"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410f7cf3jaoltlwahwdzzzggqxrbifvf37zla4zlnvq"
+      }
+    },
+    "lib/erc8167/src/Implementation.evm": {
+      "address": "f410f7ucqrklrzvyrmci7adre7rnkqsz7detwotdgndy",
+      "actorId": "f03852346",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacedgbbvj3k4nq5ohebm3fwguwvl57qvtg6ogk4p37oxniyfwfxqara"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410f7ucqrklrzvyrmci7adre7rnkqsz7detwotdgndy"
+      }
+    },
+    "PDP proxy": {
+      "address": "f410fxloqxewby4oqfz6ved3eycdwkoh2evl7wlysraq",
+      "actorId": "f03677600",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceacdhrjpqtmqtez5r6cu74ac35ikczm4ugkrqwbaiga5shexo6yuc"
+        },
+        "Nonce": 0,
+        "Balance": "54200000000000000000",
+        "DelegatedAddress": "f410fxloqxewby4oqfz6ved3eycdwkoh2evl7wlysraq"
+      }
+    },
+    "PDP implementation": {
+      "address": "f410fatkm3om6gtl6ti3g47v2pkbv4a2lyqnrvrf2i6y",
+      "actorId": "f03820929",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacea4az2cul43clw5vipy26xecfkspqognshlupo2mpm5rllyd2c56i"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fatkm3om6gtl6ti3g47v2pkbv4a2lyqnrvrf2i6y"
+      }
+    },
+    "Provider registry proxy": {
+      "address": "f410f6vo5x5r7dnk4h4ou7j7dhgtivn5wjjpl5mc3lvy",
+      "actorId": "f03681613",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacebkojsk2b3ijlgtnj6ve5hb22jjysaayvahsisfy2xwwrec4riylq"
+        },
+        "Nonce": 0,
+        "Balance": "25000000000000",
+        "DelegatedAddress": "f410f6vo5x5r7dnk4h4ou7j7dhgtivn5wjjpl5mc3lvy"
+      }
+    },
+    "Provider registry implementation": {
+      "address": "f410fdo3hmojcoiytlgetb7xy2w3g77wm4axqqyb3lfa",
+      "actorId": "f03816551",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceacyu535fvjt6kvhz5scnwellgi24kcsczuqmc6q2dqe3ayypzivq"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fdo3hmojcoiytlgetb7xy2w3g77wm4axqqyb3lfa"
+      }
+    },
+    "FilecoinPay": {
+      "address": "f410feoy6aghqro4yenelcwug52jg527x6tnkxl36cyi",
+      "actorId": "f03673583",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacea4hdg4gzazkbtisjyxtghwxazy5pqb7lp5out6yzjiytgs5o2w7i"
+        },
+        "Nonce": 0,
+        "Balance": "888500000000000",
+        "DelegatedAddress": "f410feoy6aghqro4yenelcwug52jg527x6tnkxl36cyi"
+      }
+    },
+    "SessionKeyRegistry": {
+      "address": "f410fot6vaus2swfplveemapckitr7frfemnlmevfdqy",
+      "actorId": "f03681611",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceb2mdvnb2imdrfgk6c272gubrxufgx3fvyqyuathbii7hd6ffe4j4"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fot6vaus2swfplveemapckitr7frfemnlmevfdqy"
+      }
+    },
+    "USDFC proxy": {
+      "address": "f410fqc4y2ovat777evodxjfcieir74jgf4cfcyah4wq",
+      "actorId": "f03516362",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzaceccomibmoh3up74z2cqazykc2aj6hkkvr2hy6g5b6ln26a2vusnnc"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410fqc4y2ovat777evodxjfcieir74jgf4cfcyah4wq"
+      }
+    },
+    "USDFC implementation": {
+      "address": "f410flbgb7jflfgnor5yvj7hfwg7kppo2z7ilxsqxlwq",
+      "actorId": "f03643752",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacecr2yatyubiicnftjm2qvvlfzh6b37mdef7wa524g457uglukqh7i"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410flbgb7jflfgnor5yvj7hfwg7kppo2z7ilxsqxlwq"
+      }
+    },
+    "Endorsement set": {
+      "address": "f410flhx2f2bsjykvdvdacdl3bmka5yxvy4tlzd5r2wy",
+      "actorId": "f03735581",
+      "actor": {
+        "Code": {
+          "/": "bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm"
+        },
+        "Head": {
+          "/": "bafy2bzacea3mmlp2ewvsuohknavh7thvfrepwvf6rjlbg76zexkda3nzjpow2"
+        },
+        "Nonce": 0,
+        "Balance": "0",
+        "DelegatedAddress": "f410flhx2f2bsjykvdvdacdl3bmka5yxvy4tlzd5r2wy"
+      }
+    }
+  },
+  "omissions": [
+    {
+      "role": "legacy monolith",
+      "address": "0xa874C7333c8e1689C33155AD7bEE980926086e21",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "legacy state view",
+      "address": "0xcf184Ab1FD8D1a563054d30Aa1fFb08136998172",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "legacy SignatureVerificationLib",
+      "address": "0x63904443e46cc9F3db35CB4Fe16c76E7ffCA453e",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "legacy Rails library",
+      "address": "0x54aC29E68B3C7C5F7F315CeF1a85ECA848B88a9b",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "transition",
+      "address": "0x469957097A6322bEed2D85B6259Ab5A02454D3F4",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "initial migration",
+      "address": "0x7E382064e9D0485c69A45ca28889bA71D1809c7B",
+      "reason": "Obsolete monolith dependency or rollout artifact, not a live selector target."
+    },
+    {
+      "role": "FilBeam beneficiary",
+      "address": "0x1D60d2F5960Af6341e842C539985FA297E10d6eA",
+      "reason": "Coded recipient identity; normal ERC20 transfers do not invoke it."
+    }
+  ],
+  "omittedWorkflows": [
+    "Legacy direct state-view integrations",
+    "Replaying monolith-to-dispatcher transition",
+    "Beneficiary wallet and proxy-admin control operations",
+    "Other PDP dataset listeners",
+    "USDFC minting/collateral system",
+    "Future migrations to unselected addresses"
+  ],
+  "archive": {
+    "path": "snapshots/fwss-mainnet-v1.5.0-height-6530880.press.car.zst",
+    "bytes": 3376065279,
+    "actors": 30,
+    "metadataRoot": "bafy2bzaceamnc2swoshohefpyqxxagh7dp2qjj5pvalgqlh5etuvirlljt3ce",
+    "preparedStateRoot": "bafy2bzaceabecrf3fife5vukmobqsiqiqck4nbhj4kdupp6sn65qloec3zx7m",
+    "actorManifestData": "bafy2bzacedkektcokxgpzt6rpzvpd5sdnh2ppje7np5vwlmdgk255pxlwhnum",
+    "inspection": "Press state metadata: bafy2bzaceamnc2swoshohefpyqxxagh7dp2qjj5pvalgqlh5etuvirlljt3ce\nPrepared state root: bafy2bzaceabecrf3fife5vukmobqsiqiqck4nbhj4kdupp6sn65qloec3zx7m\nSource head CIDs:\n  bafy2bzacea3bfjizcfsazta5lcn2tfrr5np4hsskhhdmugt723a5jhkm5r6w6\n  bafy2bzacebgvdy3aqyjyiqnz3xacsr7bndy43cjk3pr377quxe4ibcr2hgy5w\n  bafy2bzacedqg3vimwwbryj4ifqjq3bmsm76abi4gnr6x5elzcyfjf7moep4e4\n  bafy2bzaceccdnw6cocbus2ngjcntlgqym7k3lzsvkk5aej4we2r4yyseazezu\nSource parent state root: bafy2bzaceatovyxuwiforynmxzmkthv7dh3jo6zrpkv6p5onds5qbtvbpvxkq\nEpoch: 6530880\nTimestamp: 1794232800\nBase fee (attoFIL): 694\nNetwork version: 29\nActor manifest data: bafy2bzacedkektcokxgpzt6rpzvpd5sdnh2ppje7np5vwlmdgk255pxlwhnum\nActors:\n  f00 code=bafk2bzaceccbmcmiarj4r3ob66tefb77graozqiptfrmvfw6cfpm7hnopkk52 state=bafy2bzacecuif7wmdlv3olo5newclja7yzimwooncg5tgxlj5goyuk6xfh5ia source_state=bafy2bzacecuif7wmdlv3olo5newclja7yzimwooncg5tgxlj5goyuk6xfh5ia sequence=0 balance_atto=100000000006660000000 delegated_address=-\n  f01 code=bafk2bzacea756nwbcdmq33sjf5rkfzkn2n6uhvimulp6caogh7wcffxvjkcsu state=bafy2bzaceabv4ekbmppmba3vkoumlxe4zcxu73kga7wxwncrcaonz7clm2y7g source_state=bafy2bzaceapsshsu4qzm5rja7bkcjgcw7uk3sepu5kliqn3rfjxdgjwla774u sequence=0 balance_atto=400150009016660000600 delegated_address=-\n  f02 code=bafk2bzacea5ga7xnnqnr6e4nqjgtijd3ifkglxd3scclhvuzawlymjzda4sgu state=bafy2bzacea6ifayv6hovukmxc3xp7pmyiwm4wmzglbhqxvxpsf5dcsvqzioza source_state=bafy2bzacea6ifayv6hovukmxc3xp7pmyiwm4wmzglbhqxvxpsf5dcsvqzioza sequence=0 balance_atto=688672198008514895883394289 delegated_address=-\n  f010 code=bafk2bzacedikzpibaahzyrjg24ldr4jvjycr2zm5whm5fmqnjrz2fdzxb2pbo state=bafy2bzacebc3bt6cedhoyw34drrmjvazhu4oj25er2ebk4u445pzycvq4ta4a source_state=bafy2bzacebc3bt6cedhoyw34drrmjvazhu4oj25er2ebk4u445pzycvq4ta4a sequence=0 balance_atto=1000000000000 delegated_address=-\n  f099 code=bafk2bzacecgttsyulmd4r2y64iw64x2t4w7tkh636tbtkemy37ume6fxtcjuu state=bafy2bzacedpuk5ggwoq3s2wixsyjjnexpsjstdlyntio76vs2lt2jvy3o6mau source_state=bafy2bzacedpuk5ggwoq3s2wixsyjjnexpsjstdlyntio76vs2lt2jvy3o6mau sequence=0 balance_atto=43143089234186359932022377 delegated_address=-\n  f03516362 (0x80B98d3aa09ffff255c3ba4A241111Ff1262F045) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceccomibmoh3up74z2cqazykc2aj6hkkvr2hy6g5b6ln26a2vusnnc source_state=bafy2bzaceccomibmoh3up74z2cqazykc2aj6hkkvr2hy6g5b6ln26a2vusnnc sequence=0 balance_atto=0 delegated_address=f410fqc4y2ovat777evodxjfcieir74jgf4cfcyah4wq\n  f03643752 (0x584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacecr2yatyubiicnftjm2qvvlfzh6b37mdef7wa524g457uglukqh7i source_state=bafy2bzacecr2yatyubiicnftjm2qvvlfzh6b37mdef7wa524g457uglukqh7i sequence=0 balance_atto=0 delegated_address=f410flbgb7jflfgnor5yvj7hfwg7kppo2z7ilxsqxlwq\n  f03673583 (0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacea4hdg4gzazkbtisjyxtghwxazy5pqb7lp5out6yzjiytgs5o2w7i source_state=bafy2bzacea4hdg4gzazkbtisjyxtghwxazy5pqb7lp5out6yzjiytgs5o2w7i sequence=0 balance_atto=888500000000000 delegated_address=f410feoy6aghqro4yenelcwug52jg527x6tnkxl36cyi\n  f03677600 (0xBADd0B92C1c71d02E7d520f64c0876538fa2557F) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceacdhrjpqtmqtez5r6cu74ac35ikczm4ugkrqwbaiga5shexo6yuc source_state=bafy2bzaceacdhrjpqtmqtez5r6cu74ac35ikczm4ugkrqwbaiga5shexo6yuc sequence=0 balance_atto=54200000000000000000 delegated_address=f410fxloqxewby4oqfz6ved3eycdwkoh2evl7wlysraq\n  f03681611 (0x74FD50525A958aF5d484601E252271f9625231aB) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceb2mdvnb2imdrfgk6c272gubrxufgx3fvyqyuathbii7hd6ffe4j4 source_state=bafy2bzaceb2mdvnb2imdrfgk6c272gubrxufgx3fvyqyuathbii7hd6ffe4j4 sequence=0 balance_atto=0 delegated_address=f410fot6vaus2swfplveemapckitr7frfemnlmevfdqy\n  f03681613 (0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacebkojsk2b3ijlgtnj6ve5hb22jjysaayvahsisfy2xwwrec4riylq source_state=bafy2bzacebkojsk2b3ijlgtnj6ve5hb22jjysaayvahsisfy2xwwrec4riylq sequence=0 balance_atto=25000000000000 delegated_address=f410f6vo5x5r7dnk4h4ou7j7dhgtivn5wjjpl5mc3lvy\n  f03681616 (0x8408502033C418E1bbC97cE9ac48E5528F371A9f) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacedaxc65o34wl3zusicfpq23gpbqibtlf72vwbxjek3x2bhiifvrsq source_state=bafy2bzacedaxc65o34wl3zusicfpq23gpbqibtlf72vwbxjek3x2bhiifvrsq sequence=0 balance_atto=0 delegated_address=f410fqqefaibtyqmodo6jptu2yshfkkhtogu76jzlymq\n  f03735581 (0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacea3mmlp2ewvsuohknavh7thvfrepwvf6rjlbg76zexkda3nzjpow2 source_state=bafy2bzacea3mmlp2ewvsuohknavh7thvfrepwvf6rjlbg76zexkda3nzjpow2 sequence=0 balance_atto=0 delegated_address=f410flhx2f2bsjykvdvdacdl3bmka5yxvy4tlzd5r2wy\n  f03816551 (0x1bb676392272313598930fef8d5b66ffecce02f0) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceacyu535fvjt6kvhz5scnwellgi24kcsczuqmc6q2dqe3ayypzivq source_state=bafy2bzaceacyu535fvjt6kvhz5scnwellgi24kcsczuqmc6q2dqe3ayypzivq sequence=0 balance_atto=0 delegated_address=f410fdo3hmojcoiytlgetb7xy2w3g77wm4axqqyb3lfa\n  f03820929 (0x04d4cdb99e34d7e9a366e7eba7a835e034bc41b1) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacea4az2cul43clw5vipy26xecfkspqognshlupo2mpm5rllyd2c56i source_state=bafy2bzacea4az2cul43clw5vipy26xecfkspqognshlupo2mpm5rllyd2c56i sequence=0 balance_atto=0 delegated_address=f410fatkm3om6gtl6ti3g47v2pkbv4a2lyqnrvrf2i6y\n  f03852331 (0x50d271127b3bEaeF4b72B5cDD329B2ba3E698df8) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacedluo5qfkf4qdzmq2dpyx3uvzuvzwcfnqk5yikaeclpmvfr2hzsry source_state=bafy2bzacedluo5qfkf4qdzmq2dpyx3uvzuvzwcfnqk5yikaeclpmvfr2hzsry sequence=0 balance_atto=0 delegated_address=f410fkdjhcet3hpvo6s3swxg5gknsxi7gtdpy4ys3nma\n  f03852334 (0x8b760eb8314a37343662181dabb0f09ef05f9a19) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacectuneutx7gihe4nyorbqprcoxxbrzvog23h672ozuy6rtcvwwaus source_state=bafy2bzacectuneutx7gihe4nyorbqprcoxxbrzvog23h672ozuy6rtcvwwaus sequence=0 balance_atto=0 delegated_address=f410frn3a5obrji3tintcdao2xmhqt3yf7gqzh624nua\n  f03852335 (0x5a56e54c3a21f91bc171e2ffc0150168676897a7) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacecqpa723wfd2stdrqwbswdxsztmh5x7nsmp37qtiny3hxv5b2vuiw source_state=bafy2bzacecqpa723wfd2stdrqwbswdxsztmh5x7nsmp37qtiny3hxv5b2vuiw sequence=0 balance_atto=0 delegated_address=f410fljloktb2eh4rxqlr4l74afibnbtwrf5hrcdpkei\n  f03852336 (0xa61ea56403ce48e8c8cda4262d6a6f59765bb73f) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceckwxkgec5xip4dsgyxsy4krevfzqzb4mel2blkt5cfc3o6unq6zs source_state=bafy2bzaceckwxkgec5xip4dsgyxsy4krevfzqzb4mel2blkt5cfc3o6unq6zs sequence=0 balance_atto=0 delegated_address=f410fuypkkzadzzeorsgnuqtc22tplf3fxnz7gubksji\n  f03852337 (0x11cce0ef5c2fe347d7a6b29cd7d4b43c7cef6df1) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacecdpj5m3c5gw46rmhp3xinzir7z7gqbqfzan35matj24xytwnkn7g source_state=bafy2bzacecdpj5m3c5gw46rmhp3xinzir7z7gqbqfzan35matj24xytwnkn7g sequence=0 balance_atto=0 delegated_address=f410fchgob324f7rupv5gwkonpvfuhr6o63prxbenu3i\n  f03852338 (0xe1bc0f3382e5e1a11daa08c47b61e18e621752a4) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacecac5lz67cswvenfgqp2mfkvvb74zsgdfjpawxmknqifnbm6chsrg source_state=bafy2bzacecac5lz67cswvenfgqp2mfkvvb74zsgdfjpawxmknqifnbm6chsrg sequence=0 balance_atto=0 delegated_address=f410f4g6a6m4c4xq2chnkbdchwypbrzrbouvefnk3cpi\n  f03852339 (0xd03beed75adc7fd1064ffebc7bd11e9086b0a00c) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacec7sc3xhmljgllaqsxzwdir5vtw7wdm4qtyymoqkhkiolgsznpupu source_state=bafy2bzacec7sc3xhmljgllaqsxzwdir5vtw7wdm4qtyymoqkhkiolgsznpupu sequence=0 balance_atto=0 delegated_address=f410f2a565v223r75cbsp726hxui6scdlbiamlw3kn2a\n  f03852340 (0x98aa1637dc789fd30479185ac5b8d010b89303ac) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceaqqbso3voeh5za53rddncxosoezpqheojmo6bmqocps6hkn6y7kc source_state=bafy2bzaceaqqbso3voeh5za53rddncxosoezpqheojmo6bmqocps6hkn6y7kc sequence=0 balance_atto=0 delegated_address=f410ftcvbmn64pcp5gbdzdbnmlogqcc4jga5mgzk2o2y\n  f03852341 (0xce05f92c107d2d207dbaeb4c02ebf1442e131557) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacearwxx6x4wigpi7fes2dqdtk2bqdk7algb3nvzaza43z6nvcmobkc source_state=bafy2bzacearwxx6x4wigpi7fes2dqdtk2bqdk7algb3nvzaza43z6nvcmobkc sequence=0 balance_atto=0 delegated_address=f410fzyc7slaqpuwsa7n25ngaf27riqxbgfkxyodnkya\n  f03852342 (0x6f9526c1dddacdfa181f4bbcf0b11b81227802d2) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceag7w3h5c5k2qogksmupe66chfzsm7qj3pj5uys6mbz72klls4zwq source_state=bafy2bzaceag7w3h5c5k2qogksmupe66chfzsm7qj3pj5uys6mbz72klls4zwq sequence=0 balance_atto=0 delegated_address=f410fn6ksnqo53lg7uga7jo6pbmi3qerhqawspiywnfy\n  f03852343 (0xf88bb481cb9aec03d879ce4c685e21416a5dff2b) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacedey7omktojm3jzwcxn3vzuhmb3hxrr4jgsle5u3swh4xbfpv4zqg source_state=bafy2bzacedey7omktojm3jzwcxn3vzuhmb3hxrr4jgsle5u3swh4xbfpv4zqg sequence=0 balance_atto=0 delegated_address=f410f7cf3jaoltlwahwdzzzggqxrbifvf37zla4zlnvq\n  f03852344 (0x129cc24160dbe808b867f5f06291bbf85eeff7c3) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacebdt7b6nqrhpvx4zooewgki2wi3amk5wzzd3lwftkg7e5l23rvii6 source_state=bafy2bzacebdt7b6nqrhpvx4zooewgki2wi3amk5wzzd3lwftkg7e5l23rvii6 sequence=0 balance_atto=0 delegated_address=f410fckomeqla3puarodh6xygfen37bpo756dppb5cea\n  f03852345 (0xc89995181e165917de165827cc742facf43e0cad) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacebkv73akru22kjnugaxkuyare2rb3hrbflclhiit3ajwq737jzuv6 source_state=bafy2bzacebkv73akru22kjnugaxkuyare2rb3hrbflclhiit3ajwq737jzuv6 sequence=0 balance_atto=0 delegated_address=f410fzcmzkga6czmrpxqwlat4y5bpvt2d4dfn6v2mswq\n  f03852346 (0xfd0508a971cd7116091f00e24fc5aa84b3f19276) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzacedgbbvj3k4nq5ohebm3fwguwvl57qvtg6ogk4p37oxniyfwfxqara source_state=bafy2bzacedgbbvj3k4nq5ohebm3fwguwvl57qvtg6ogk4p37oxniyfwfxqara sequence=0 balance_atto=0 delegated_address=f410f7ucqrklrzvyrmci7adre7rnkqsz7detwotdgndy\n  f03852347 (0xec384887a59e0706fc2017df0feb87301017d2d6) code=bafk2bzaceaufbdpwqvu6r7bbfpx4w4fw3cub27lm45wapyjfaiwesgvkrw5lm state=bafy2bzaceblh3i64foczejh4lqboaw6zfg7ik6pyo3yf7nwj2elyq64grprmo source_state=bafy2bzaceblh3i64foczejh4lqboaw6zfg7ik6pyo3yf7nwj2elyq64grprmo sequence=0 balance_atto=0 delegated_address=f410f5q4erb5ftydqn7bac7pq724hgaibpuww6k5ejiy\n",
+    "selectedActorStateUnchanged": true,
+    "structuralValidation": "passed before atomic publication",
+    "fullReadbackAudit": false,
+    "blocks": 17461169,
+    "exportedStateBlocks": 17461168,
+    "buildSeconds": 314.91,
+    "constructionSeconds": 2.7,
+    "writingCompletedAtSeconds": 225.1,
+    "indexingCompletedAtSeconds": 314.7
+  },
+  "commands": {
+    "build": "target/release/press build --snapshot snapshots/forest_snapshot_mainnet_2026-11-09_height_6530880.forest.car.zst --recipe recipes/fwss-mainnet-v1.5.0.json --output snapshots/fwss-mainnet-v1.5.0-height-6530880.press.car.zst --network-version 29",
+    "inspect": "target/release/press inspect snapshots/fwss-mainnet-v1.5.0-height-6530880.press.car.zst",
+    "tests": [
+      "cargo test -p press validates_archive_network_version_boundaries",
+      "cargo test -p fvm-anvil-state archive::tests"
+    ],
+    "format": "cargo fmt --all -- --check"
+  },
+  "verification": {
+    "pressBoundaryTestsPassed": 1,
+    "stateArchiveTestsPassed": 3,
+    "formatCheckPassed": true,
+    "exactInventoryAndPatchChecksPassed": true,
+    "nativeActorStateHeadsMatchHistoricalRPC": true,
+    "localExecution": "Not run; excluded by user, NV29 unsupported by current node."
+  }
+}

@@ -1,311 +1,114 @@
 ---
 name: fwss-snapshot-extraction
-description: Extract Filecoin Warm Storage Service (FWSS), its proxies, implementations, libraries, and runtime contract dependencies from a Filecoin Forest snapshot into one Press archive. Use this skill whenever a user mentions FWSS, FilecoinWarmStorageService, warm-storage state extraction, preparing an FWSS snapshot, or importing the FWSS stack into fvm-anvil—even when no Filecoin Services source checkout exists locally.
-compatibility: Requires this repository's release `press` and `fvm-anvil` binaries, a compatible ForestCAR snapshot, and `cast` for runtime checks. Network access is useful for retrieving pinned deployment manifests and source when no local checkout exists.
+description: Extract FWSS (FilecoinWarmStorageService), modular delegates, proxies, libraries, and connected contracts from a Filecoin Forest snapshot into one Press archive. Use for warm-storage snapshot extraction or fvm-anvil imports, including without a local source checkout.
+compatibility: Requires release press and a ForestCAR snapshot. Runtime validation additionally requires compatible fvm-anvil, actor bundle, and cast.
 ---
 
 # Extract FWSS from a Forest snapshot
 
-Produce one reproducible Press recipe and one self-contained prepared archive containing the FWSS contract graph needed by the requested experiment. Treat the snapshot as authoritative for live state and proxy targets. Treat deployment records and source as discovery inputs, not proof of what the snapshot contains.
+Snapshot state is authoritative; deployment records and source identify candidates. Produce one versioned recipe and one combined archive. Never substitute current deployment metadata for snapshot state.
 
-## Required outputs
+## Establish inputs and compatibility
 
-Deliver all of the following:
+1. Use the supplied snapshot, otherwise inspect `snapshots/` before downloading. If needed, resolve `https://forest-archive.chainsafe.dev/latest/mainnet` (or `/calibnet`) and preserve the dated artifact basename. Prefer resumable, segmented `aria2c` downloads.
+2. Run `target/release/press inspect snapshots/SOURCE.forest.car.zst`. Record epoch, timestamp, parent state root, chain ID, and actual network version. Raw-snapshot inspection does not establish network version: consult pinned upgrade records or native `StateNetworkVersion` at the matching tipset.
+3. Check extraction and execution compatibility separately, including actor manifest/bundle and state schemas. Never relabel network metadata, replace actor codes, or bypass checks to load newer state.
+4. Establish intended workflows, explicit sidecars, patches, recipe/output paths, and source revision. If execution is unsupported, agree extraction-only versus extending runtime support; do not silently expand scope.
 
-1. Before building, list every contract planned for extraction with its address, role, and evidence.
-2. A versioned recipe under `recipes/`.
-3. A prepared archive under `snapshots/`.
-4. `press inspect` roots and actor inventory.
-5. Runtime proof from `fvm-anvil` that every selected contract and proxy dependency works.
-6. Explicit omissions and the FWSS paths those omissions place out of scope.
+## Pin deployment evidence
 
-Do not assume `extern/filecoin-services` or any other upstream checkout exists. If one exists, it is only a convenient read-only source.
+Canonical repository: `https://github.com/FilOzone/filecoin-services`.
 
-## Acquire a source snapshot
+Read `service_contracts/deployments.json` at a pinned commit. For modular deployments also read `service_contracts/josuke.json`: its facet records and deployed-source revision may supersede a stale manifest version label. Follow pinned dependency/submodule revisions, especially ERC-8167. Use stable raw URLs or a temporary read-only checkout; never assume `extern/filecoin-services` exists.
 
-Do not assume a snapshot already exists in the repository. Use a user-supplied ForestCAR when provided; otherwise resolve the ChainSafe redirect endpoint for the target network:
+Record constructor arguments, linked libraries, proxy targets, and code hashes. Snapshot code/storage/routes win over conflicting records. Historical RPC must match the snapshot's tipset CIDs, timestamp, and imported **head parent state**; matching epoch numbers alone is insufficient. Label corroborating historical observations separately from archive runtime proof.
 
-- Mainnet: `https://forest-archive.chainsafe.dev/latest/mainnet`
-- Calibration: `https://forest-archive.chainsafe.dev/latest/calibnet`
+## Resolve the complete graph
 
-The endpoint redirects to a dated artifact whose filename contains the network, date, and height. Resolve that URL first and preserve its basename; never save the archive under a `latest` alias.
+For each candidate record address, role, code presence, proxy/delegate targets, evidence, reachable workflow, and selection decision.
 
-Prefer `aria2c` when installed because these archives are large and benefit from resumable segmented downloads:
+Normally include:
 
-```console
-redirect_url=https://forest-archive.chainsafe.dev/latest/NETWORK
-snapshot_url=$(curl --silent --show-error --location --head \
-  --output /dev/null \
-  --write-out '%{url_effective}' \
-  \"$redirect_url\")
-snapshot_name=$(basename \"$snapshot_url\")
+- FWSS proxy and live monolith, or dispatcher plus every live delegate.
+- Standalone state view only if the live view path uses one.
+- Externally linked libraries, not inlined imports.
+- PDPVerifier and ServiceProviderRegistry proxies and live implementations.
+- FilecoinPay, SessionKeyRegistry, payment token, and its proxy dependencies.
+- Explicitly requested sidecars such as the endorsement set, even when not FWSS callees.
 
-aria2c --continue=true \
-  --max-connection-per-server=16 \
-  --split=16 \
-  --dir=snapshots \
-  \"$snapshot_url\"
-```
+Do not select unrelated release companions automatically. Beneficiaries/controllers, including coded wallets, need inclusion only when called, explicitly requested, or required for preserved state. Proxy admins are control identities, not delegatecall dependencies. State references do not imply every referenced actor belongs in the archive.
 
-Replace `NETWORK` with `mainnet` or `calibnet`. Use `snapshots/$snapshot_name` in every subsequent command and report. If `aria2c` is unavailable, download the resolved URL with another resumable client while preserving `$snapshot_name`.
+### Proxies
 
-## Inputs to establish
-
-Record these before authoring the recipe:
-
-- source snapshot path, epoch, timestamp, network version, and state root;
-- target chain ID/network;
-- canonical deployment-manifest URL and exact commit or release revision;
-- intended FWSS version or snapshot epoch if the user specified one;
-- intended runtime paths, such as views only, provider registration, dataset creation, payments, proving, or upgrades;
-- recipe and output paths;
-- whether state patches are requested.
-
-Inspect the snapshot first:
-
-```console
-target/release/press inspect snapshots/SOURCE.forest.car.zst
-```
-
-Ensure the snapshot postdates the deployment. A current default branch is not a reproducible deployment input.
-
-## Obtain deployment evidence without a local source tree
-
-Use the canonical Filecoin Services repository and deployment records remotely:
-
-The canonical repository is `https://github.com/FilOzone/filecoin-services`; its deployment manifest is `service_contracts/deployments.json`. Read a pinned file without a checkout using a URL of the form:
+Probe **every selected contract**, including tokens and implementations, recursively:
 
 ```text
-https://raw.githubusercontent.com/FilOzone/filecoin-services/COMMIT/service_contracts/deployments.json
-```
-
-
-1. Locate the chain entry in the canonical `deployments.json`.
-2. Pin the exact repository commit recorded by that deployment or associated release.
-3. Read files at that revision through stable GitHub/raw URLs or a temporary read-only checkout.
-4. Follow pinned submodule revisions when constructor or library behavior lives in another repository.
-5. Record constructor arguments, proxy targets, linked libraries, and deployment version metadata.
-
-Prefer, in order:
-
-1. deployment manifest at a pinned revision;
-2. source and compiler metadata at that revision;
-3. historical chain RPC at the snapshot epoch;
-4. bytecode and storage observed through a temporary prepared archive.
-
-Never substitute the newest source for the deployed source. Newer source may change versions, constructor arguments, linked libraries, storage layout, or dependencies.
-
-## Build the dependency graph
-
-Start with the FWSS proxy and recursively classify every address discovered from deployment metadata, source, constructor arguments, linked-library metadata, and live proxy storage.
-
-For each address, record:
-
-- role and contract name;
-- whether it has code;
-- proxy standard, if any;
-- live implementation or beacon target;
-- evidence source;
-- which exercised path can call it;
-- whether it belongs in the recipe.
-
-### Baseline FWSS graph
-
-A complete payment-capable FWSS archive normally needs:
-
-- FWSS proxy;
-- live FWSS implementation;
-- FWSS state-view contract;
-- every externally linked FWSS library;
-- PDPVerifier proxy and live implementation;
-- ServiceProviderRegistry proxy and live implementation;
-- FilecoinPay contract;
-- SessionKeyRegistry contract;
-- configured payment token proxy or contract;
-- live payment-token implementation when the token is a proxy.
-
-Constructor identities such as a beneficiary or controller are not contract dependencies merely because their addresses are stored. Include them only when they contain code that an exercised path calls or when preserving their actor state is otherwise required.
-
-Sidecar contracts deployed in the same release are not dependencies unless the deployed FWSS graph references them. For example, do not include a provider-set contract solely because it appears beside FWSS in a manifest.
-
-### Linked libraries
-
-Read the deployment artifact's `libraries` map. Externally linked Solidity libraries are separate EVM actors and must be selected. Imports alone do not prove external linking because internal library functions may be inlined.
-
-After import, confirm each expected linked-library address occurs in the deployed FWSS implementation bytecode and has non-empty code.
-
-### Immutable references
-
-Map FWSS constructor arguments to their declared fields at the pinned source revision. Typical immutable references include PDPVerifier, FilecoinPay, the payment token, ServiceProviderRegistry, and SessionKeyRegistry. Verify their public getters through the FWSS proxy after import.
-
-An “immutable token reference” means FWSS cannot change the referenced address without a new implementation. It does not prove that the token at that address is itself non-proxy.
-
-## Resolve proxies recursively
-
-Probe every selected contract, including external tokens, rather than only contracts named `Proxy` in the FWSS manifest.
-
-For ERC-1967 proxies, read:
-
-```text
-implementation slot:
+ERC-1967 implementation:
 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
-
-beacon slot:
+beacon:
 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50
 ```
 
-Use a historical RPC at the snapshot epoch when available:
+Use historical `cast storage ADDRESS SLOT --rpc-url RPC --block EPOCH` only after establishing state correspondence. Include each implementation and beacon; resolve the beacon's `implementation()(address)` too. Every call/delegatecall target must have code.
 
-```console
-cast storage PROXY IMPLEMENTATION_SLOT \
-  --rpc-url HISTORICAL_RPC \
-  --block SNAPSHOT_EPOCH
-```
+Without historical RPC, inspect snapshot storage offline or build a candidate archive and probe it with a compatible node. Add missing targets and rebuild until closed. Never present manifest candidates as resolved live dependencies.
 
-Confirm that the RPC's Ethereum block identifier maps to the Filecoin epoch before trusting the result.
+### Modular dispatch
 
-If historical RPC is unavailable:
+An ERC-1967 target may be an ERC-8167 dispatcher:
 
-1. Include the known proxy in a candidate recipe.
-2. Build and start the candidate archive.
-3. Read the implementation slot through local RPC.
-4. If it points to an actor absent from the archive, add that implementation to the recipe and rebuild.
-5. Repeat for the newly discovered contract until every proxy target has non-empty code.
+1. Call `selectors()(bytes4[])` through the FWSS proxy at the source state.
+2. Resolve **every** selector using `implementation(bytes4)(address)`.
+3. Include the dispatcher and every distinct delegate, including generated Selectors and Implementation introspection contracts.
+4. Compare delegate code hashes with the pinned Josuke ledger. Resolve each module's immutables and callees independently; Config-module getters do not establish other modules' immutable values.
+5. Read `viewContractAddress()`: if it returns the FWSS proxy, query views there instead of assuming a separate state view.
 
-For a beacon proxy, include the beacon and the beacon's implementation. Proxy admins are control identities, not delegatecall dependencies.
+Exclude obsolete monoliths, old linked libraries, and rollout transition/migration artifacts unless live routes, workloads, or explicit scope require them. Verify external library addresses occur in their callers' bytecode and have code. Imports alone do not prove external linking.
 
-Snapshot storage wins when a deployment record's implementation differs from the live implementation slot. Record the mismatch instead of silently selecting one.
+## Select and build
 
-## Present the planned extraction before building
+**Before building**, present the selected contract/address/role/evidence table and deliberate omissions. Keep extraction recipes patch-free unless changes were requested. Derive any storage patch from exact deployed layouts and record original/replacement words.
 
-List contracts grouped by role:
-
-- FWSS proxy, implementation, and state view;
-- linked libraries;
-- PDP proxy and implementation;
-- provider-registry proxy and implementation;
-- payment and authorization contracts;
-- payment-token proxy and implementation;
-- deliberate omissions.
-
-Include addresses and evidence. Do this before writing or running the final recipe.
-
-## Author the Press recipe
-
-Use one actor entry per resolved actor:
+Use one entry per actor:
 
 ```json
-{
-  "version": 1,
-  "actors": [
-    { "address": "0x..." },
-    { "address": "0x..." }
-  ]
-}
+{"version": 1, "actors": [{"address": "0x..."}]}
 ```
 
-Keep extraction-only recipes patch-free unless the user explicitly requests a controller, owner, code, balance, or sequence change. If a patch is requested, derive storage slots from the exact deployed dependency revision and document source and replacement words.
-
-Press adds System, Init, Reward, EAM, and burnt-funds actors automatically. Do not list them.
-
-Press does not infer dynamic EVM callees. Include dynamic destinations deliberately when the requested workload can reach them.
-
-## Build one combined archive
-
-Build the complete graph in one recipe:
+Press adds System, Init, Reward, EAM, and burnt-funds actors. Do not list them. Explicitly select dynamic callees needed by the workload; Press cannot infer them or merge separate prepared archives.
 
 ```console
-cargo build --release -p press -p fvm-anvil
-
+cargo build --release -p press
 target/release/press build \
   --snapshot snapshots/SOURCE.forest.car.zst \
   --recipe recipes/FWSS_RECIPE.json \
-  --output snapshots/FWSS_OUTPUT.press.car.zst
-```
-
-Use a command runner without a short deadline. Large PDP, payment, or token storage can contain tens of millions of IPLD blocks.
-
-Do not split dependencies into separate prepared archives: `fvm-anvil` loads one prepared state, and Press does not merge prepared archives. Press traverses the union of all selected actor DAGs once and deduplicates shared CIDs.
-
-Rely on the default structural validation before atomic publication, then prove the selected runtime paths through the node.
-
-## Recognize performance regressions
-
-Progress should remain roughly stable per 100,000 blocks after source caches warm. Diagnose a steadily worsening per-block rate rather than attributing it to a modest increase in compressed bytes.
-
-The visited CID set must have enough buckets for multi-million-block traversals. A tiny fixed bucket table creates long on-disk collision chains with total work approaching $O(N^2/B)$. The current implementation uses a 4,194,304-head table, consuming 32 MiB for heads.
-
-The synchronous ForestCAR writer must not flush its temporary file per IPLD block. Zstd flushes used to expose compressed frame length should remain buffered until the frame boundary.
-
-If performance regresses, inspect:
-
-- block count and time per 100,000 blocks;
-- visited-set bucket load and collision-chain scans;
-- per-block file flushes;
-- source frame-cache hit behavior;
-- index external-sort time separately from actor traversal.
-
-Compressed output size alone is a poor proxy for work because EVM KAMTs can contain millions of small blocks.
-
-## Inspect the completed archive
-
-```console
+  --output snapshots/FWSS_OUTPUT.press.car.zst \
+  --network-version "$NETWORK_VERSION"
 target/release/press inspect snapshots/FWSS_OUTPUT.press.car.zst
 ```
 
-Check:
+Set `NETWORK_VERSION` to the actual source version. Allow long-running builds; selected storage can contain millions of blocks. Rely on default structural validation before atomic publication; `--verify` adds full indexed readback.
 
-- source epoch, timestamp, network version, and state root;
-- expected requested address under every selected actor ID;
-- selected actor count plus the five automatic runtime actors;
-- no accidental patches;
-- metadata and prepared roots;
-- every snapshot-authoritative proxy implementation actor.
+Inspect provenance, roots, every requested address/actor ID, selected count plus five runtime actors, code dependencies, and absence of unintended patches. Unpatched selected state roots must remain unchanged.
 
-## Prove runtime behavior
+If throughput steadily worsens per 100,000 blocks, investigate visited-CID collision chains, per-block file flushes, and source-cache behavior. Measure indexing separately; compressed size is not a work estimate.
 
-Start the real node:
+## Validate execution when in scope
 
-```console
-target/release/fvm-anvil \
-  --state snapshots/FWSS_OUTPUT.press.car.zst \
-  --port 18547 \
-  --no-mining
-```
+Build `fvm-anvil` and start the real node with `--state ARCHIVE --port 18547 --no-mining`. Through public RPC verify:
 
-Use public Ethereum RPC to verify:
+- Nonempty code at all selected addresses; every proxy/beacon target is included.
+- For modular FWSS, all local selectors resolve to the selected delegates.
+- Snapshot-appropriate `VERSION()`, dependency getters, and the actual view path; standalone views must identify the FWSS proxy via `service()`.
+- PDP/registry proxy getters, FilecoinPay, SessionKeyRegistry, token `decimals()`, and selected sidecar views.
+- The requested workflow. Views do not prove deposits, dataset creation, proving callbacks, or upgrade authorization. For payment validation, perform a real operation reaching both FilecoinPay and the token.
 
-1. `eth_getCode` is non-empty at every selected address.
-2. Every proxy's ERC-1967 implementation slot names an included actor with non-empty code.
-3. FWSS `VERSION()` matches the snapshot deployment, not necessarily current source.
-4. FWSS immutable getters return the selected PDP, payment, token, registry, and session-key addresses.
-5. The state-view `service()` getter names the FWSS proxy.
-6. A state-view query successfully traverses view → FWSS proxy → FWSS implementation.
-7. PDP and registry version or state getters execute through their proxies.
-8. FilecoinPay and SessionKeyRegistry getters execute.
-9. Payment-token calls such as `decimals()` execute through the token proxy when applicable.
-10. Linked-library addresses are embedded in FWSS implementation bytecode and their actors have code.
+For agreed extraction-only work, explicitly report local execution as unverified. Historical chain calls are not imported-runtime proof. If a workflow reaches an omitted callee, expand and rebuild rather than fake success.
 
-Then exercise the actual requested workflow. Views alone do not prove dataset creation, payment deposits, proving callbacks, or upgrade authorization. For a payment-capable archive, run the narrowest real operation that reaches FilecoinPay and the token.
+## Evidence and documentation
 
-## Handle mismatches
+Keep run-specific addresses, source pins, slot words, selector routes, calls, roots, inventory, timings, and validation commands in a recipe-adjacent evidence file. Distinguish historical calls, structural validation, full readback, and local execution; never claim unrun checks.
 
-Use these rules:
+Keep `docs/press-recipes.md` and this skill reusable: procedures, constraints, pitfalls, and links to examples. Do not append session logs, artifact statistics, or validation transcripts.
 
-- Manifest address differs from snapshot proxy slot: select the snapshot target and report the mismatch.
-- Runtime version differs from current source: report the runtime version; do not patch it to match source.
-- Address has no code and is only a recipient/controller: classify it as an identity and omit it.
-- Address has no code but is a delegatecall/call target: the dependency graph is incomplete; locate and add the actor.
-- A later workflow reaches an omitted dynamic callee: expand the recipe and rebuild; do not fake success.
-
-## Report format
-
-Return:
-
-- final contract/address table with roles;
-- omitted addresses and reasons;
-- recipe and archive paths;
-- archive byte size, actor count, block count, metadata root, and prepared root;
-- proxy-slot and runtime-call evidence;
-- exact build and validation commands;
-- observed performance data without extrapolated claims.
+Report recipe/archive/evidence paths, contract roles and omissions, archive bytes/actors/blocks/roots, and exercised verification or blockers. Keep the chat concise; link detailed evidence. Report only measured performance.
