@@ -43,7 +43,8 @@ Ethereum and supported native `Filecoin.*` methods share HTTP/WebSocket `/rpc/v1
 `ChainNotify` requires WebSocket and Go `go-jsonrpc` channel framing, not Ethereum
 subscription framing. Successful registration sends one initial `current`; subsequent
 committed changes publish `apply`, and snapshot rollback publishes `revert` changes
-followed by the restored head. Cancellation and reconnect are supported.
+followed by the restored head. Cancellation works both standalone and inside WebSocket
+batches, using the original subscription request ID; reconnect is supported.
 
 | Native method | Positional parameters | Result |
 | --- | --- | --- |
@@ -73,8 +74,10 @@ Lotus randomness and native object-store methods are not implied by this boundar
   policy](design.md#implemented-rpc-compatibility).
 - The pinned Go Ethereum client decodes full empty/nonempty blocks, receipts, and event logs.
   Curio derives dataset/piece IDs from those events and needs an additional epoch after
-  transaction inclusion. Proof sends are checked through actual receipts, not an assumed
-  `message_waits_eth` row.
+  transaction inclusion. Acceptance retains the original HTTP `Location` hashes for database
+  lookups, but resolves `message_waits_eth.confirmed_tx_hash` for create/add receipt checks
+  and result evidence, including fee replacements. Proof sends are checked through actual
+  receipts, not an assumed `message_waits_eth` row.
 - Empty interval blocks advance confidence and proof schedules. A realistic genesis timestamp
   is required by the recipe; generic Anvil defaults remain unchanged.
 - The [database/indexing profile](../tests/curio/README.md#database-networking-and-indexing-behavior)

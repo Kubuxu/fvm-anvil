@@ -109,6 +109,13 @@ impl Drop for Subscriptions {
     }
 }
 
+fn cancel(subscriptions: &mut Subscriptions, value: &Value) -> Option<Value> {
+    let id = value.get("params")?.get(0)?;
+    let (channel, task) = subscriptions.0.remove(&id.to_string())?;
+    task.abort();
+    Some(json!({"jsonrpc":"2.0", "method":"xrpc.ch.close", "params":[channel]}))
+}
+
 async fn send(sink: &mut futures::stream::SplitSink<WebSocket, Message>, value: Value) -> bool {
     matches!(
         tokio::time::timeout(
@@ -178,7 +185,7 @@ async fn connection(service: RpcService, socket: WebSocket) {
     let (events, mut incoming) = mpsc::channel::<ChannelEvent>(64);
     let mut subscriptions = Subscriptions::default();
     let mut next_channel = 0_u64;
-    loop {
+    'connection: loop {
         tokio::select! {
             event = incoming.recv() => {
                 let Some(event) = event else { break; };
@@ -213,11 +220,8 @@ async fn connection(service: RpcService, socket: WebSocket) {
                 };
                 let method = value.get("method").and_then(Value::as_str).unwrap_or("");
                 if method == "xrpc.cancel" {
-                    if let Some(id) = value.get("params").and_then(|v| v.get(0))
-                        && let Some((channel, task)) = subscriptions.0.remove(&id.to_string()) {
-                        task.abort();
-                        if !send(&mut sink, json!({"jsonrpc":"2.0", "method":"xrpc.ch.close", "params":[channel]})).await { break; }
-                    }
+                    if let Some(closed) = cancel(&mut subscriptions, &value)
+                        && !send(&mut sink, closed).await { break; }
                     continue;
                 }
                 if method == "Filecoin.ChainNotify" {
@@ -230,6 +234,11 @@ async fn connection(service: RpcService, socket: WebSocket) {
                     }
                     let mut responses = Vec::new();
                     for value in batch {
+                        if value.get("method").and_then(Value::as_str) == Some("xrpc.cancel") {
+                            if let Some(closed) = cancel(&mut subscriptions, &value)
+                                && !send(&mut sink, closed).await { break 'connection; }
+                            continue;
+                        }
                         let response = if value.get("method").and_then(Value::as_str) == Some("Filecoin.ChainNotify") {
                             subscribe(&service, &value, &mut subscriptions, &events, &mut next_channel).await
                         } else {
@@ -362,6 +371,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receive(&mut socket).await["result"], "0x7a69");
+        socket
+            .send(ClientMessage::Text(
+                json!([
+                    {"jsonrpc":"2.0", "method":"xrpc.cancel", "params":[2]},
+                    {"jsonrpc":"2.0", "id":4, "method":"eth_chainId", "params":[]},
+                ])
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let closed = receive(&mut socket).await;
+        assert_eq!(closed["method"], "xrpc.ch.close");
+        assert_eq!(closed["params"][0], 0);
+        let responses = receive(&mut socket).await;
+        assert_eq!(responses, json!([{"jsonrpc":"2.0", "id":4, "result":"0x7a69"}]));
+        node.mine_blocks(1, None, None).await.unwrap();
+        socket
+            .send(ClientMessage::Text(
+                json!({"jsonrpc":"2.0", "id":5, "method":"eth_blockNumber", "params":[]})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(receive(&mut socket).await["result"], "0x1");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), socket.next()).await.is_err(),
+            "cancelled subscription must not emit newly mined heads"
+        );
         socket.close(None).await.unwrap();
         server.abort();
         let _ = server.await;

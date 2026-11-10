@@ -5,3 +5,4 @@ extern
 snapshots
 /.curio-build/
 /.curio-acceptance/
+__pycache__/

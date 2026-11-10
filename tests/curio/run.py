@@ -41,6 +41,12 @@ def wait_for(fn, timeout, label):
         time.sleep(2)
     raise RuntimeError('timed out: ' + label)
 
+def confirmed_transaction_hash(original_hash, timeout):
+    return wait_for(
+        lambda: sql("SELECT confirmed_tx_hash FROM message_waits_eth WHERE signed_tx_hash='" + original_hash + "' AND tx_status='confirmed' AND tx_success=true"),
+        timeout, 'confirmed transaction hash for ' + original_hash,
+    )
+
 def post(url, body):
     req = urllib.request.Request(url, json.dumps(body).encode(), {'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=60) as response:
@@ -200,7 +206,10 @@ DirectAnnounceURLs = []
             raise RuntimeError('CQL proof cache is empty')
         if sql('SELECT count(*) FROM pdp_data_sets WHERE ipfs_indexing IS DISTINCT FROM false') != '0' or sql('SELECT count(*) FROM ipni') != '0':
             raise RuntimeError('indexing isolation violated')
-        result = {'signer': signer, 'dataSetId': dataset, 'pieceId': piece_id, 'pieceCid': cid, 'createTx': create_hash, 'addTx': add_hash, 'proofTx': proof_hash}
+        # Location hashes remain database identities after fee replacement.
+        create_tx = confirmed_transaction_hash(create_hash, a.timeout)
+        add_tx = confirmed_transaction_hash(add_hash, a.timeout)
+        result = {'signer': signer, 'dataSetId': dataset, 'pieceId': piece_id, 'pieceCid': cid, 'createTx': create_tx, 'addTx': add_tx, 'proofTx': proof_hash}
         if a.storage_terms_id is not None:
             evidence = Authorization(a, manifest).verify_storage_terms(dataset, auth)
             (a.work_dir / 'storage-terms-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
@@ -208,7 +217,7 @@ DirectAnnounceURLs = []
         (a.work_dir / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         # Stop scheduling before the destructive snapshot/revert wire gate.
         stop()
-        command([a.client.resolve(), a.rpc_url.replace('http://', 'ws://').replace('https://', 'wss://'), create_hash, add_hash, proof_hash])
+        command([a.client.resolve(), a.rpc_url.replace('http://', 'ws://').replace('https://', 'wss://'), create_tx, add_tx, proof_hash])
         print(json.dumps(result, indent=2))
     finally:
         stop()
