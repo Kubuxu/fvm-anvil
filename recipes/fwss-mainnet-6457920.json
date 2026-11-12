@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "actors": [
+    { "address": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f" },
+    { "address": "0xa874C7333c8e1689C33155AD7bEE980926086e21" },
+    { "address": "0xcf184Ab1FD8D1a563054d30Aa1fFb08136998172" },
+    { "address": "0x63904443e46cc9F3db35CB4Fe16c76E7ffCA453e" },
+    { "address": "0x54aC29E68B3C7C5F7F315CeF1a85ECA848B88a9b" },
+    { "address": "0xBADd0B92C1c71d02E7d520f64c0876538fa2557F" },
+    { "address": "0x04D4CdB99E34D7e9a366E7eba7A835e034bc41b1" },
+    { "address": "0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB" },
+    { "address": "0x1Bb676392272313598930FEf8D5B66FFECcE02F0" },
+    { "address": "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa" },
+    { "address": "0x74FD50525A958aF5d484601E252271f9625231aB" },
+    { "address": "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045" },
+    { "address": "0x584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b" }
+  ]
+}

@@ -57,6 +57,7 @@ cid = { version = "0.11.3", features = ["serde", "std"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3.31"
 hex = "0.4.3"
+memmap2 = "0.5.10"
 multihash-codetable = { version = "0.2.2", features = ["blake2b", "sha2"] }
 rand_08 = { package = "rand", version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }

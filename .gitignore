@@ -2,4 +2,6 @@ extern
 /target/
 /tests/acceptance/cache/
 /tests/acceptance/out/
+/benchmarks/fwss/contracts/cache/
+/benchmarks/fwss/contracts/out/
 snapshots

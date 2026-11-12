@@ -289,3 +289,66 @@ do not mutate verifier state.
 | `cleanupPieces` | 64 | 4,553,835,628 | 136,541,618 | -97.0% |
 | `cleanupPieces` | 96 | 6,598,846,685 | 161,517,495 | -97.6% |
 | `cleanupPieces` | 96 and finalize | 658,885,130 | 194,883,685 | -70.4% |
+
+## FWSS metadata cleanup snapshot at epoch 6,457,920
+
+Recipe [`recipes/fwss-mainnet-6457920.json`](../recipes/fwss-mainnet-6457920.json) selects the
+FWSS 1.4.0 dependency graph without state patches. Its deployment evidence is
+`service_contracts/deployments.json` at Filecoin Services checkout
+`7e6bd5013f4ec9ba2b3db4e8bda7353f8cdd4e19`; that manifest records deployment revision
+`4cbbea4a4f7da51ad674a1d9d122c6e677acfbec`. Snapshot proxy storage, not the original proxy constructor
+arguments, determines the implementation selections.
+
+| Role | Selected address |
+| --- | --- |
+| FWSS proxy | `0x8408502033C418E1bbC97cE9ac48E5528F371A9f` |
+| FWSS implementation | `0xa874C7333c8e1689C33155AD7bEE980926086e21` |
+| FWSS state view | `0xcf184Ab1FD8D1a563054d30Aa1fFb08136998172` |
+| SignatureVerificationLib | `0x63904443e46cc9F3db35CB4Fe16c76E7ffCA453e` |
+| Rails | `0x54aC29E68B3C7C5F7F315CeF1a85ECA848B88a9b` |
+| PDPVerifier proxy | `0xBADd0B92C1c71d02E7d520f64c0876538fa2557F` |
+| PDPVerifier implementation | `0x04D4CdB99E34D7e9a366E7eba7A835e034bc41b1` |
+| ServiceProviderRegistry proxy | `0xf55dDbf63F1b55c3F1D4FA7e339a68AB7b64A5eB` |
+| ServiceProviderRegistry implementation | `0x1Bb676392272313598930FEf8D5B66FFECcE02F0` |
+| FilecoinPay | `0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa` |
+| SessionKeyRegistry | `0x74FD50525A958aF5d484601E252271f9625231aB` |
+| USDFC proxy | `0x80B98d3aa09ffff255c3ba4A241111Ff1262F045` |
+| USDFC implementation | `0x584c1fa4ab299ae8f7154fce5b1bea7bddacfd0b` |
+
+The endorsement set `0x59eFa2e8324E1551d46010d7B0B140eE2F5c726b` is a sidecar, not a metadata
+cleanup dependency. The FilBeam beneficiary `0x1D60d2F5960Af6341e842C539985FA297E10d6eA` is a recipient
+identity, not an exercised contract. Endorsement operations and beneficiary execution are outside this
+archive's validation scope.
+
+```console
+target/release/press inspect snapshots/forest_snapshot_mainnet_2026-10-15_height_6457920.forest.car.zst
+target/release/press build \
+  --snapshot snapshots/forest_snapshot_mainnet_2026-10-15_height_6457920.forest.car.zst \
+  --recipe recipes/fwss-mainnet-6457920.json \
+  --output snapshots/fwss-mainnet-6457920.press.car.zst
+target/release/press inspect snapshots/fwss-mainnet-6457920.press.car.zst
+target/release/fvm-anvil --state snapshots/fwss-mainnet-6457920.press.car.zst --port 18548
+```
+
+Observed archive: 3,755,008,567 bytes, 18 actors including the five automatic runtime actors, and
+19,627,839 blocks. Press completed in 560.10 seconds, including indexing and structural validation.
+Full reachable-DAG readback (`--verify`) was not requested.
+
+```text
+metadata: bafy2bzacedpacda35j44xc46ph5rk5uwj3qism2gjfdq6wbdn5ajsjkjo5wyc
+prepared: bafy2bzaceaaehbn76hgusbcheqfufbgjsuur7xaais3nriigc5stclrzh3t5m
+source:   bafy2bzaceaobifrjxaztyzwsaayt5kvbay6sbsqcmdnks6kkbcln7b4y2h5sa
+```
+
+The imported context is NV28/v18, timestamp 1,792,044,000, base fee 8,267 attoFIL/gas. Runtime checks
+confirmed nonempty code at every selected address, all four ERC-1967 implementation slots, FWSS
+`VERSION()` 1.4.0, PDP `VERSION()` 3.5.0, registry `VERSION()` 1.2.0, all FWSS dependency getters,
+state-view `service()` and delegated provider-count access, session authorization lookup, payment
+constants, and USDFC `decimals()` 18. Both linked-library addresses occur in implementation bytecode.
+A reverted-after-validation zero-amount `FilecoinPay.deposit(USDFC, caller, 0)` transaction exercised
+the payment/token call path successfully using 76,512,565 FVM gas; this does not prove positive-value
+funding or a complete payment lifecycle.
+
+Detailed local evidence is saved in
+`benchmarks/fwss/results/metadata-cleanup-6457920/extraction-validation.json`.
+
