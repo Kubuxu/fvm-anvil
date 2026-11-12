@@ -1024,7 +1024,7 @@ dependencies = [
  "ff",
  "group",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "pairing",
  "rand 0.8.7",
  "rand_core 0.6.4",
@@ -2330,7 +2330,7 @@ dependencies = [
  "iowrap",
  "lazy_static",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "merkletree",
  "once_cell",
  "rand 0.8.7",
@@ -2686,8 +2686,10 @@ dependencies = [
  "fvm_ipld_kamt",
  "fvm_shared",
  "hex",
+ "memmap2 0.9.12",
  "multihash-codetable",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "zstd",
@@ -3536,6 +3538,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "merkletree"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3544,7 +3555,7 @@ dependencies = [
  "anyhow",
  "arrayref",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "positioned-io",
  "rayon",
  "serde",
@@ -4998,7 +5009,7 @@ dependencies = [
  "itertools 0.13.0",
  "lazy_static",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "merkletree",
  "num_cpus",
  "rand 0.8.7",
@@ -5036,7 +5047,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "merkletree",
  "neptune",
  "num-bigint",
@@ -5088,7 +5099,7 @@ dependencies = [
  "generic-array 0.14.7",
  "lazy_static",
  "log",
- "memmap2",
+ "memmap2 0.5.10",
  "merkletree",
  "neptune",
  "rayon",

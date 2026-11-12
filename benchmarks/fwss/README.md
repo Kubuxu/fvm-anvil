@@ -140,3 +140,10 @@ $ benchmarks/fwss/report.py \
 ```
 
 Filter with `--operation` or select `--format json` or `--format csv` for machine-readable output. Reporting does not require a running node.
+
+## Legacy metadata cleanup
+
+The [PR #658 cleanup runbook](metadata-cleanup.md) covers frozen-state inventory,
+historical coverage bounds, globally storage-ordered packed operations, and
+sequential execution with a durable transaction journal. This is a separate
+maintenance workflow, not the lifecycle benchmark runner.

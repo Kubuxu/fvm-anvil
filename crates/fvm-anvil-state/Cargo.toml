@@ -28,6 +28,8 @@ zstd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+memmap2 = "0.9"
+serde_json.workspace = true
 
 [lints]
 workspace = true
